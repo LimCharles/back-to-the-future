@@ -139,11 +139,20 @@ def main():
         max_prompt_len = max(max_model_len - args.max_len - 10, 10)  # Reserve space for generation + safety margin
 
         # Batch tokenize all prompts in current batch
-        inputs = gen_tokenizer.batch_encode_plus(
+        # inputs = gen_tokenizer.batch_encode_plus(
+        #     prompt_texts,
+        #     return_tensors="pt",
+        #     padding=True,          # Pad shorter prompts to same length
+        #     truncation=True,       # Truncate longer prompts
+        #     max_length=max_prompt_len,
+        # )
+
+        # Batch encode plus didn't exist, weird error.
+        inputs = gen_tokenizer(
             prompt_texts,
             return_tensors="pt",
-            padding=True,          # Pad shorter prompts to same length
-            truncation=True,       # Truncate longer prompts
+            padding=True,
+            truncation=True,
             max_length=max_prompt_len,
         )
         prompt_ids = inputs.input_ids.to(device)
