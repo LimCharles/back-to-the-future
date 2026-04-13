@@ -95,9 +95,9 @@ class GenerationRunner:
 
         # Determine output path (mirrors generate.py naming convention)
         if baseline:
-            output_csv = PROJECT_ROOT / f"results/comparison_{hmm_variant}_a{a}_generated.csv"
+            output_csv = PROJECT_ROOT / f"results/generated/comparison_{hmm_variant}_a{a}_generated.csv"
         else:
-            output_csv = PROJECT_ROOT / f"results/detox_{hmm_variant}_a{a}_generated.csv"
+            output_csv = PROJECT_ROOT / f"results/generated/detox_{hmm_variant}_a{a}_generated.csv"
         return str(output_csv)
 
     def score(
@@ -115,9 +115,12 @@ class GenerationRunner:
             Absolute path to the scored CSV file.
         """
         if output_csv is None:
-            output_csv = input_csv.replace("_generated.csv", "_scored.csv")
-            if output_csv == input_csv:
-                output_csv = input_csv.replace(".csv", "_scored.csv")
+            input_name = Path(input_csv).name
+            output_name = input_name.replace("_generated.csv", "_scored.csv")
+            if output_name == input_name:
+                output_name = input_name.replace(".csv", "_scored.csv")
+            output_csv = str(PROJECT_ROOT / "results" / "evaluation" / output_name)
+        Path(output_csv).parent.mkdir(parents=True, exist_ok=True)
 
         cmd: List[str] = [
             sys.executable,

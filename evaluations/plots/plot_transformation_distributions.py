@@ -40,7 +40,7 @@ def main():
         description="Plot transformation distributions."
     )
     parser.add_argument("--train_data", type=str, default="data/RTP_train.jsonl")
-    parser.add_argument("--coefficients", type=str, default="data/coefficients_nontoxicity.csv")
+    parser.add_argument("--coefficients", type=str, default="classifiers/coefficients_nontoxicity.csv")
     parser.add_argument(
         "--eap_dumps", type=str, nargs="*", default=[],
         help="One or more .npz EAP dump files (from --dump_eap_path)",
@@ -51,7 +51,7 @@ def main():
     )
     parser.add_argument("--b", type=float, default=10.0)
     parser.add_argument("--c", type=float, default=3.0)
-    parser.add_argument("--output_dir", type=str, default="evaluations/figures")
+    parser.add_argument("--output_dir", type=str, default="results/figures")
     parser.add_argument("--dpi", type=int, default=300)
     args = parser.parse_args()
 

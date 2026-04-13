@@ -207,7 +207,7 @@ def create_diagnostic_plot(original_scores: np.ndarray, transformed_scores: np.n
     plt.tight_layout()
     
     # Save plot
-    plot_path = os.path.join(PROJECT_ROOT, f"results/fit_diagnostic_b{b}_c{c}_alpha{alpha}.png")
+    plot_path = os.path.join(PROJECT_ROOT, f"results/evaluation/fit_diagnostic_b{b}_c{c}_alpha{alpha}.png")
     os.makedirs(os.path.dirname(plot_path), exist_ok=True)
     plt.savefig(plot_path, dpi=150, bbox_inches='tight')
     print(f"✓ Diagnostic plot saved to {plot_path}")
@@ -227,13 +227,13 @@ def main():
     parser.add_argument("--alpha", type=float, default=1e-6, 
                         help="Lasso regularization strength")
     parser.add_argument("--output_path", type=str, default=None,
-                        help="Output path for coefficients (default: data/coefficients_{attribute}.csv)")
-    
+                        help="Output path for coefficients (default: classifiers/coefficients_{attribute}.csv)")
+
     args = parser.parse_args()
 
     # Set default output path based on attribute
     if args.output_path is None:
-        args.output_path = f"data/coefficients_{args.attribute}.csv"
+        args.output_path = f"classifiers/coefficients_{args.attribute}.csv"
 
     # Make paths absolute
     if not os.path.isabs(args.data_path):

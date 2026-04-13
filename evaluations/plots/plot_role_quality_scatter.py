@@ -77,12 +77,12 @@ def main():
              "generates and evaluates from scratch.",
     )
     parser.add_argument(
-        "--coefficients_dir", type=str, default="data/coefficients_role/",
+        "--coefficients_dir", type=str, default="classifiers/role/",
         help="Directory with per-character coefficient CSVs",
     )
     parser.add_argument("--hmm_variant", type=str, default="hmm1")
     parser.add_argument("--prompts_path", type=str, default="data/prompts.jsonl")
-    parser.add_argument("--output_dir", type=str, default="evaluations/figures")
+    parser.add_argument("--output_dir", type=str, default="results/figures")
     parser.add_argument("--device", type=str, default="cuda")
     parser.add_argument("--dpi", type=int, default=300)
     args = parser.parse_args()

@@ -79,7 +79,7 @@ def main():
                         help="Number of timing runs to average")
     parser.add_argument("--num_prompts", type=int, default=100,
                         help="Prompts for inference timing (uses first N from file)")
-    parser.add_argument("--output_dir", type=str, default="evaluations/results")
+    parser.add_argument("--output_dir", type=str, default="results/tables")
     parser.add_argument("--device", type=str, default="cuda")
     args = parser.parse_args()
 

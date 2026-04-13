@@ -12,7 +12,7 @@ prompts.  Target magnitude: ~52 for GPT-2-large baseline.
 Usage::
 
     python -m evaluations.tables.table7_conditional_entropy \\
-        --scored_csv results/detox_hmm1_a1.0_scored.csv
+        --scored_csv results/evaluation/detox_hmm1_a1.0_scored.csv
 """
 import argparse
 import json
@@ -41,7 +41,7 @@ def main():
     parser.add_argument("--a", type=float, default=1.0)
     parser.add_argument("--num_generations", type=int, default=25)
     parser.add_argument("--max_len", type=int, default=20)
-    parser.add_argument("--output_dir", type=str, default="evaluations/results")
+    parser.add_argument("--output_dir", type=str, default="results/tables")
     parser.add_argument("--device", type=str, default="cuda")
     parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args()

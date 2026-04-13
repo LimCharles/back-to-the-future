@@ -60,7 +60,15 @@ class DistilBERTRegressor(nn.Module):
     def forward(self, input_ids, attention_mask, **kwargs):
         outputs = self.bert(input_ids=input_ids, attention_mask=attention_mask)
         cls_output = outputs.last_hidden_state[:, 0]
-        return self.head(cls_output).squeeze(-1)
+        logit = self.head(cls_output).squeeze(-1)
+        return torch.sigmoid(logit)
+
+
+def log_mse_loss(preds, targets, eps=1e-7):
+    """Log-MSE loss matching the factorised classifier's objective (Section 4.3)."""
+    preds = torch.clamp(preds, eps, 1 - eps)
+    targets = torch.clamp(targets, eps, 1 - eps)
+    return ((torch.log(preds) - torch.log(targets)) ** 2).mean()
 
 
 def main():
@@ -77,7 +85,7 @@ def main():
         help="Attribute to predict",
     )
     parser.add_argument(
-        "--output_dir", type=str, default="data/",
+        "--output_dir", type=str, default="classifiers/",
         help="Directory for model checkpoint and metrics JSON",
     )
     parser.add_argument("--epochs", type=int, default=5)
@@ -86,6 +94,10 @@ def main():
     parser.add_argument("--max_length", type=int, default=128)
     parser.add_argument("--val_frac", type=float, default=0.1)
     parser.add_argument("--device", type=str, default=None)
+    parser.add_argument(
+        "--politics_data_path", type=str, default=None,
+        help="Misra news JSONL (defaults to data/misra_news.json)",
+    )
     args = parser.parse_args()
 
     if not os.path.isabs(args.data_path):
@@ -105,14 +117,34 @@ def main():
     # ------------------------------------------------------------------
     # 1. Load data
     # ------------------------------------------------------------------
-    texts, scores = [], []
-    with open(args.data_path, "r") as f:
-        for line in f:
-            record = json.loads(line)
-            text = record["continuation"]["text"]
-            score = float(record["continuation"][args.attribute])
-            texts.append(text)
-            scores.append(score)
+    if args.attribute == "toxicity":
+        texts, scores = [], []
+        with open(args.data_path, "r") as f:
+            for line in f:
+                try:
+                    record = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                text = record["continuation"]["text"]
+                score = float(record["continuation"]["toxicity"])
+                texts.append(text)
+                scores.append(score)
+    elif args.attribute == "politics":
+        # Politics labels come from Misra news scored by zero-shot DeBERTa.
+        # fit_nonpoliticalness.py writes the cache as a side effect.
+        politics_scores_cache = str(PROJECT_ROOT / "classifiers/misra_news_political_scores.json")
+        if os.path.exists(politics_scores_cache):
+            with open(politics_scores_cache) as f:
+                cached = json.load(f)
+            texts, scores = cached["texts"], cached["scores"]
+        else:
+            raise FileNotFoundError(
+                f"Politics scores cache not found at {politics_scores_cache}. "
+                f"Run fit_nonpoliticalness.py first — it writes this cache "
+                f"as a side effect."
+            )
+    else:
+        raise ValueError(f"Unknown attribute: {args.attribute}")
     print(f"Loaded {len(texts)} samples")
 
     # ------------------------------------------------------------------
@@ -138,7 +170,7 @@ def main():
     # ------------------------------------------------------------------
     model = DistilBERTRegressor().to(device)
     optimiser = torch.optim.AdamW(model.parameters(), lr=args.lr)
-    loss_fn = nn.MSELoss()
+    loss_fn = log_mse_loss
 
     best_val_loss = float("inf")
     metrics_log = []
@@ -186,6 +218,10 @@ def main():
                 args.output_dir, f"neural_classifier_{args.attribute}.pt"
             )
             torch.save(model.state_dict(), ckpt_path)
+
+    # Reload best checkpoint so the in-memory model is the best one
+    model.load_state_dict(torch.load(ckpt_path))
+    model.eval()
 
     # ------------------------------------------------------------------
     # 4. Save metrics

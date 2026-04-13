@@ -129,21 +129,21 @@ def main():
     parser.add_argument("--data_path", type=str, default="data/RTP_train.jsonl")
     parser.add_argument(
         "--factorised_toxicity", type=str,
-        default="data/coefficients_nontoxicity.csv",
+        default="classifiers/coefficients_nontoxicity.csv",
     )
     parser.add_argument(
         "--neural_toxicity", type=str,
-        default="data/neural_classifier_toxicity.pt",
+        default="classifiers/neural_classifier_toxicity.pt",
     )
     parser.add_argument(
         "--factorised_politics", type=str,
-        default="data/coefficients_nonpoliticalness.csv",
+        default="classifiers/coefficients_nonpoliticalness.csv",
     )
     parser.add_argument(
         "--neural_politics", type=str,
-        default="data/neural_classifier_politics.pt",
+        default="classifiers/neural_classifier_politics.pt",
     )
-    parser.add_argument("--output_dir", type=str, default="evaluations/results")
+    parser.add_argument("--output_dir", type=str, default="results/tables")
     parser.add_argument("--device", type=str, default=None)
     args = parser.parse_args()
 

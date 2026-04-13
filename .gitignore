@@ -49,8 +49,8 @@ Thumbs.db
 
 # Data and model files (large files)
 models/
-data/RTP_*.jsonl
-data/RTP_*.tar.gz
+data/
+classifiers/
 releases/
 
 # Results and outputs
@@ -69,3 +69,4 @@ dump/
 CLAUDE.md
 
 trace.md
+output/

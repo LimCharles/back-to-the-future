@@ -96,7 +96,7 @@ def main():
     parser.add_argument("--weights_path", type=str, default="data/coefficients.csv")
     parser.add_argument("--baseline", action="store_true",
                         help="Also generate baseline (no HMM) for comparison")
-    parser.add_argument("--output_dir", type=str, default="evaluations/results")
+    parser.add_argument("--output_dir", type=str, default="results/tables")
     parser.add_argument("--device", type=str, default="cuda")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument(
@@ -185,7 +185,7 @@ def main():
 
                 # Check if scored CSV already exists (resumability)
                 scored_csv = str(
-                    PROJECT_ROOT / f"results/detox_{variant}_a{a}_scored.csv"
+                    PROJECT_ROOT / f"results/evaluation/detox_{variant}_a{a}_scored.csv"
                 )
                 if not os.path.exists(scored_csv):
                     gen_csv = runner.generate(

@@ -55,7 +55,7 @@ def main():
     parser.add_argument("--train_data_path", type=str, default="data/RTP_train.jsonl")
     parser.add_argument("--a", type=float, default=1.0, help="Guidance strength for all rows")
     parser.add_argument("--num_generations", type=int, default=25)
-    parser.add_argument("--output_dir", type=str, default="evaluations/results")
+    parser.add_argument("--output_dir", type=str, default="results/tables")
     parser.add_argument("--device", type=str, default="cuda")
     parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args()

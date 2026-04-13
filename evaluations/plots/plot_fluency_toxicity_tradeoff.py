@@ -34,9 +34,9 @@ def main():
     )
     parser.add_argument(
         "--input", type=str,
-        default="evaluations/results/table1_detoxification.json",
+        default="results/tables/table1_detoxification.json",
     )
-    parser.add_argument("--output_dir", type=str, default="evaluations/figures")
+    parser.add_argument("--output_dir", type=str, default="results/figures")
     parser.add_argument("--dpi", type=int, default=300)
     parser.add_argument("--format", type=str, default="png", choices=["png", "pdf"])
     args = parser.parse_args()

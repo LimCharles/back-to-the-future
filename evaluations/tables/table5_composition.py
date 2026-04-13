@@ -87,15 +87,15 @@ def main():
     parser.add_argument("--prompts_path", type=str, default="data/prompts.jsonl")
     parser.add_argument(
         "--nontoxicity_weights", type=str,
-        default="data/coefficients_nontoxicity.csv",
+        default="classifiers/coefficients_nontoxicity.csv",
     )
     parser.add_argument(
         "--nonpolitical_weights", type=str,
-        default="data/coefficients_nonpoliticalness.csv",
+        default="classifiers/coefficients_nonpoliticalness.csv",
     )
     parser.add_argument("--a", type=float, default=1.0)
     parser.add_argument("--num_generations", type=int, default=25)
-    parser.add_argument("--output_dir", type=str, default="evaluations/results")
+    parser.add_argument("--output_dir", type=str, default="results/tables")
     parser.add_argument("--device", type=str, default="cuda")
     parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args()

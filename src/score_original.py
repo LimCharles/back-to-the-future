@@ -378,7 +378,7 @@ def main():
     # Auto-detect input file if not specified
     if args.input_csv is None:
         import glob
-        results_dir = os.path.join(PROJECT_ROOT, "results/")
+        results_dir = os.path.join(PROJECT_ROOT, "results/generated/")
         generated_files = glob.glob(f"{results_dir}/*_generated.csv")
         if not generated_files:
             raise FileNotFoundError(f"No generated CSV files found in '{results_dir}'. Run generate.py first.")

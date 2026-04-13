@@ -72,7 +72,7 @@ def main():
     parser.add_argument("--num_prompts", type=int, default=200)
     parser.add_argument("--num_generations", type=int, default=5)
     parser.add_argument("--a", type=float, default=1.0)
-    parser.add_argument("--output_dir", type=str, default="evaluations/figures")
+    parser.add_argument("--output_dir", type=str, default="results/figures")
     parser.add_argument("--device", type=str, default="cuda")
     parser.add_argument("--dpi", type=int, default=300)
     args = parser.parse_args()

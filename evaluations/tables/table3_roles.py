@@ -96,7 +96,7 @@ def _run_generate(
             "--max_len", str(max_len),
             "--device", device,
         ]
-        default_out = PROJECT_ROOT / "results" / "comparison_hmm1_a0.0_generated.csv"
+        default_out = PROJECT_ROOT / "results" / "generated" / "comparison_hmm1_a0.0_generated.csv"
     else:
         out_csv = output_dir / f"table3_{variant}.csv"
         cmd = [
@@ -109,7 +109,7 @@ def _run_generate(
             "--max_len", str(max_len),
             "--device", device,
         ]
-        default_out = PROJECT_ROOT / "results" / f"detox_{variant}_a{a}_generated.csv"
+        default_out = PROJECT_ROOT / "results" / "generated" / f"detox_{variant}_a{a}_generated.csv"
 
     print(f"[{variant}] running generate.py ...", flush=True)
     subprocess.run(cmd, check=True, cwd=PROJECT_ROOT, env=env)
@@ -164,7 +164,7 @@ def main() -> None:
     parser.add_argument("--a", type=float, default=1.0)
     parser.add_argument("--num_gens", type=int, default=1)
     parser.add_argument("--max_len", type=int, default=40)
-    parser.add_argument("--output_dir", type=str, default="evaluations/results/table3_roles")
+    parser.add_argument("--output_dir", type=str, default="results/tables/table3_roles")
     parser.add_argument("--device", type=str, default="auto")
     args = parser.parse_args()
 

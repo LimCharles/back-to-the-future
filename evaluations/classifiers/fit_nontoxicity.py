@@ -40,7 +40,7 @@ def main():
         help="Path to training data JSONL file",
     )
     parser.add_argument(
-        "--output_path", type=str, default="data/coefficients_nontoxicity.csv",
+        "--output_path", type=str, default="classifiers/coefficients_nontoxicity.csv",
         help="Output path for coefficients",
     )
     parser.add_argument("--b", type=float, default=10.0, help="Logit transform scaling factor")

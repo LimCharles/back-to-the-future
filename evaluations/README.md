@@ -27,8 +27,7 @@ evaluations/
 │   ├── plot_hmm_quality_vs_toxicity.py     # Checkpoint sweep twin-axis
 │   ├── plot_transformation_distributions.py # Score & EAP histograms
 │   └── plot_role_quality_scatter.py        # Prompting vs TRACE per character
-├── results/                                # JSON outputs
-├── figures/                                # PNG outputs
+├── (outputs → results/tables/ and results/figures/ at repo root)
 ├── .score_cache/                           # SHA1-keyed Detoxify cache
 └── .judge_cache/                           # SHA1-keyed judge cache
 ```
@@ -54,7 +53,7 @@ python -m evaluations.classifiers.fit_nontoxicity
 
 # Nontoxicity without logit transform (for Table 2 ablation)
 python -m evaluations.classifiers.fit_nontoxicity --b 1 --c 0 \
-    --output_path data/coefficients_nontoxicity_notf.csv
+    --output_path classifiers/coefficients_nontoxicity_notf.csv
 
 # Nonpoliticalness
 python -m evaluations.classifiers.fit_nonpoliticalness
@@ -87,7 +86,7 @@ python -m evaluations.tables.table7_conditional_entropy --hmm_variant hmm1
 
 # Table 8: LM judge (slowest — resumable)
 python -m evaluations.tables.table8_lm_judge \
-    --scored_csv results/detox_hmm1_a1.0_scored.csv --hmm_variant hmm1
+    --scored_csv results/evaluation/detox_hmm1_a1.0_scored.csv --hmm_variant hmm1
 ```
 
 ### 3. Generate plots
@@ -96,7 +95,7 @@ python -m evaluations.tables.table8_lm_judge \
 python -m evaluations.plots.plot_fluency_toxicity_tradeoff
 python -m evaluations.plots.plot_transformation_distributions
 python -m evaluations.plots.plot_hmm_quality_vs_toxicity --checkpoints_dir models/checkpoints/
-python -m evaluations.plots.plot_role_quality_scatter --role_results evaluations/results/role_eval.json
+python -m evaluations.plots.plot_role_quality_scatter --role_results results/figures/role_eval.json
 ```
 
 ## Variant Flag
@@ -126,8 +125,8 @@ Tables 1, 5, and 8 are resumable:
 ## Output Format
 
 Every script outputs:
-- A **JSON file** in `results/` with full hyperparameters, timestamps, and raw numbers
+- A **JSON file** in `results/tables/` with full hyperparameters, timestamps, and raw numbers
 - A **CSV file** alongside (human-readable table rendering)
-- Plots output **PNG** in `figures/` with a companion data JSON in `results/`
+- Plots output **PNG** in `results/figures/` with any companion data JSON in `results/figures/`
 
 JSON is the source of truth; CSV and PNG are renderings of it.

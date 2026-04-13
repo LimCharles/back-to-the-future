@@ -60,12 +60,12 @@ def main():
     if args.baseline:
         output_path = os.path.join(
             PROJECT_ROOT,
-            f"results/comparison_{args.hmm_variant}_a{args.a}_generated.csv"
+            f"results/generated/comparison_{args.hmm_variant}_a{args.a}_generated.csv"
         )
     else:
         output_path = os.path.join(
             PROJECT_ROOT,
-            f"results/detox_{args.hmm_variant}_a{args.a}_generated.csv"
+            f"results/generated/detox_{args.hmm_variant}_a{args.a}_generated.csv"
         )
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
 

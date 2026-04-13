@@ -12,7 +12,7 @@ files.
 Usage::
 
     python -m evaluations.tables.table8_lm_judge \\
-        --scored_csv results/detox_hmm1_a1.0_scored.csv \\
+        --scored_csv results/evaluation/detox_hmm1_a1.0_scored.csv \\
         --judge_model meta-llama/Llama-3.3-70B-Instruct
 """
 import argparse
@@ -43,7 +43,7 @@ def main():
         help="HuggingFace model ID for the judge",
     )
     parser.add_argument("--checkpoint_every", type=int, default=100)
-    parser.add_argument("--output_dir", type=str, default="evaluations/results")
+    parser.add_argument("--output_dir", type=str, default="results/tables")
     args = parser.parse_args()
 
     if not os.path.isabs(args.output_dir):

@@ -207,14 +207,19 @@ def score_single_prompt(
     perp_model: Any,
     perp_tokenizer: Any,
     detoxify_model: Any,
-    device: str = "cuda"
+    device: str = "cuda",
+    toxicity_only: bool = False,
 ) -> Dict:
     """Score a single prompt with all metrics: toxicity, fluency, and distinctness."""
     prefix, generations_data = extract_generations_from_row(row)
     generations_data, max_toxicity, any_toxic = compute_toxicity_metrics(generations_data, detoxify_model)
-    generations_data, mean_fluency = compute_fluency_metrics(prefix, generations_data, perp_model, perp_tokenizer, device)
-    continuations = [str(gen.get("continuation", "")) for gen in generations_data]
-    dist_1, dist_2, dist_3 = compute_distinctness_metrics(continuations)
+    if toxicity_only:
+        mean_fluency = "NA"
+        dist_1 = dist_2 = dist_3 = "NA"
+    else:
+        generations_data, mean_fluency = compute_fluency_metrics(prefix, generations_data, perp_model, perp_tokenizer, device)
+        continuations = [str(gen.get("continuation", "")) for gen in generations_data]
+        dist_1, dist_2, dist_3 = compute_distinctness_metrics(continuations)
     return update_row_with_scores(row, generations_data, max_toxicity, any_toxic, mean_fluency, dist_1, dist_2, dist_3)
 
 
@@ -222,10 +227,13 @@ def score_single_prompt(
 def main():
     parser = argparse.ArgumentParser(description="Score generated text with fluency and distinctness metrics.")
     parser.add_argument("--input_csv", type=str, default=None, help="CSV file with generated text to score (relative to project root)")
-    parser.add_argument("--output_csv", type=str, default=None, help="Output CSV file (default: input file with '_scored' suffix)")
+    parser.add_argument("--output_csv", type=str, default=None, help="Output CSV file (default: results/evaluation/<input>_scored.csv)")
     parser.add_argument("--perp_model", type=str, default="gpt2-xl", help="Model for perplexity scoring")
     parser.add_argument("--device", type=str, default=None)
     parser.add_argument("--batch_size", type=int, default=10, help="Batch size for processing")
+    parser.add_argument("--toxicity_only", action="store_true",
+                        help="Score only toxicity; skip fluency (perplexity) and distinctness. "
+                             "Aggregate columns mean_fluency/dist-1/2/3 are still written as 'NA'.")
     args = parser.parse_args()
 
     device = torch.device(args.device) if args.device else torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -233,7 +241,7 @@ def main():
 
     if args.input_csv is None:
         import glob
-        results_dir = os.path.join(PROJECT_ROOT, "results/")
+        results_dir = os.path.join(PROJECT_ROOT, "results/generated/")
         generated_files = glob.glob(f"{results_dir}/*_generated.csv")
         if not generated_files:
             raise FileNotFoundError(f"No generated CSV files found in '{results_dir}'. Run generate.py first.")
@@ -243,7 +251,12 @@ def main():
         args.input_csv = os.path.join(PROJECT_ROOT, args.input_csv)
 
     if args.output_csv is None:
-        args.output_csv = args.input_csv.replace("_generated.csv", "_scored.csv")
+        output_dir = os.path.join(PROJECT_ROOT, "results", "evaluation")
+        os.makedirs(output_dir, exist_ok=True)
+        output_name = os.path.basename(args.input_csv).replace("_generated.csv", "_scored.csv")
+        if output_name == os.path.basename(args.input_csv):
+            output_name = os.path.basename(args.input_csv).replace(".csv", "_scored.csv")
+        args.output_csv = os.path.join(output_dir, output_name)
     if args.output_csv == args.input_csv:
         base_name = args.input_csv.replace(".csv", "")
         args.output_csv = base_name + "_scored.csv"
@@ -258,13 +271,18 @@ def main():
     detoxify_model = initialize_detoxify()
     print("Detoxify model loaded successfully")
 
-    print(f"Loading fluency model '{args.perp_model}' ...")
-    perp_tokenizer = AutoTokenizer.from_pretrained(args.perp_model, padding_side="left", use_fast=True)
-    if perp_tokenizer.pad_token is None:
-        perp_tokenizer.pad_token = perp_tokenizer.eos_token
-        print(f"Set pad_token to eos_token: '{perp_tokenizer.pad_token}'")
-    perp_model = AutoModelForCausalLM.from_pretrained(args.perp_model).to(device).eval()
-    print("Fluency model loaded")
+    if args.toxicity_only:
+        print("Toxicity-only mode: skipping fluency/distinctness. Not loading perplexity model.")
+        perp_tokenizer = None
+        perp_model = None
+    else:
+        print(f"Loading fluency model '{args.perp_model}' ...")
+        perp_tokenizer = AutoTokenizer.from_pretrained(args.perp_model, padding_side="left", use_fast=True)
+        if perp_tokenizer.pad_token is None:
+            perp_tokenizer.pad_token = perp_tokenizer.eos_token
+            print(f"Set pad_token to eos_token: '{perp_tokenizer.pad_token}'")
+        perp_model = AutoModelForCausalLM.from_pretrained(args.perp_model).to(device).eval()
+        print("Fluency model loaded")
 
     print("Starting scoring process...")
     scored_rows = []
@@ -276,7 +294,8 @@ def main():
                 perp_model,
                 perp_tokenizer,
                 detoxify_model,
-                device=device
+                device=device,
+                toxicity_only=args.toxicity_only,
             )
             scored_rows.append(scored_row)
 
