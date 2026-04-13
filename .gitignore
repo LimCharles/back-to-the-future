@@ -55,6 +55,7 @@ releases/
 
 # Results and outputs
 results/
+figures/
 dump/
 
 # Temporary files

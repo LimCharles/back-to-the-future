@@ -1,7 +1,7 @@
 [project]
 name = "trace"
 version = "0.1.0"
-requires-python = "==3.11.*"
+requires-python = ">=3.11,<3.13"
 dependencies = [
     # Core scientific computing
     "numpy>=2.0.1",
@@ -45,13 +45,17 @@ dependencies = [
     "detoxify>=0.5.2",
 ]
 
-# Point torch* packages to PyTorch's CUDA index
+# Cross-platform torch:
+#   - Linux/Windows: pull CUDA 12.4 wheels from PyTorch's own index
+#   - macOS: use the default PyPI wheel (ships with MPS support on Apple Silicon)
+# Runtime device selection is handled by evaluations/device.py, which falls
+# back CUDA -> MPS -> CPU automatically, so the same code runs on any platform.
 [tool.uv.sources]
-torch     = { index = "pytorch-cu124" }
-torchvision = { index = "pytorch-cu124" }
-torchaudio  = { index = "pytorch-cu124" }
+torch       = [{ index = "pytorch-cu124", marker = "sys_platform == 'linux' or sys_platform == 'win32'" }]
+torchvision = [{ index = "pytorch-cu124", marker = "sys_platform == 'linux' or sys_platform == 'win32'" }]
+torchaudio  = [{ index = "pytorch-cu124", marker = "sys_platform == 'linux' or sys_platform == 'win32'" }]
 
 [[tool.uv.index]]
 name = "pytorch-cu124"
 url  = "https://download.pytorch.org/whl/cu124"
-explicit = true   # only used for the packages listed above
+explicit = true
