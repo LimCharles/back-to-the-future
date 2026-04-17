@@ -102,15 +102,60 @@ trace/
 │   ├── fit.py              # Train custom classifiers
 │   ├── score_attribute.py  # Score custom attributes with zero-shot
 │   └── ...                 # Core implementation
-├── data/
+├── data/                   # Raw inputs only (gitignored; pre-existing tracked files remain)
 │   ├── prompts.jsonl       # Demo prompts (12 examples)
-│   ├── coefficients.csv    # Pre-trained toxicity classifier  
+│   ├── coefficients.csv    # Pre-trained toxicity classifier (bundled with TRACE)
 │   ├── RTP_train.jsonl     # Training data (100k prompts)
-│   └── RTP_test.jsonl      # Test data (10k prompts)
-├── models/                 # Pre-trained HMM model
+│   ├── RTP_test.jsonl      # Test data (10k prompts)
+│   ├── misra_news.json     # Misra News Category dataset (for nonpoliticalness)
+│   └── rolebench/          # RoleBench JSONL splits
+├── classifiers/            # Locally-fit classifiers (gitignored)
+│   ├── coefficients_nontoxicity.csv
+│   ├── coefficients_nonpoliticalness.csv
+│   ├── role/               # Per-character role classifiers
+│   └── neural_classifier_*.pt
+├── results/                # Gitignored
+│   ├── generated/          # _generated.csv, _scored.csv from src/generate.py + src/score.py
+│   └── evaluation/         # table*.json/csv, plot*.png from the eval harness
+├── models/
+│   ├── hmm_gpt2-large_uncon_seq-len-32_4096_10M/  # TRACE-paper HMM (retrained w/ new data)
+│   └── hmm_gpt2-large_bttf/                        # Our group's base HMM (hmm1 variant)
+├── evaluations/            # Model-agnostic experiment harness (tables + plots)
+│   ├── tables/             # table1..table8 (detox, ablation, timing, composition, ...)
+│   ├── plots/              # fluency-tox tradeoff, HMM-quality sweep, tf distributions, roles
+│   ├── classifiers/        # fit scripts for nontoxicity, nonpoliticalness, role, neural baseline
+│   ├── generation_runner.py  # Wraps src/generate.py + src/score.py
+│   ├── judge.py            # LM-as-judge (Llama-3.3-70B-Instruct)
+│   ├── metrics.py          # Shared metrics (max-tox, prob>0.5, dist-n, PPL, cond. entropy)
+│   └── csv_schema.py       # Canonical scored-CSV schema + validator
 ├── environment.yml         # GPU environment
 └── environment_cpu.yml     # CPU environment
 ```
+
+## 📊 Evaluations Harness
+
+`evaluations/` reproduces the paper's quantitative results. Every script takes
+`--hmm_variant {hmm1,hmm2,chmm}` and records the variant in its output JSON/CSV.
+
+**Tables** (under `evaluations/tables/`):
+- **table1_detoxification** — full RTP sweep; avg max-tox, prob>0.5, dist-2/3, PPL.
+- **table2_transformation_ablation** — logit transform toggled at train/decode time.
+- **table3_roles** — qualitative role-play side-by-side across whichever HMM dirs exist.
+- **table4_timing** — classifier fit time + TRACE/baseline per-token inference ratio.
+- **table5_composition** — nontoxicity × nonpoliticalness composition (w'=w¹·w²).
+- **table6_factorizability** — CE loss: Lasso factorised vs DistilBERT neural (no HMM).
+- **table7_conditional_entropy** — token-level conditional entropy from a scored CSV.
+- **table8_lm_judge** — Llama-3.3-70B judge scores (resumable via checkpoint).
+
+**Plots** (under `evaluations/plots/`):
+- **plot_fluency_toxicity_tradeoff** — Figure 3; consumes `table1_detoxification.json`.
+- **plot_hmm_quality_vs_toxicity** — twin-axis val-LL vs avg-max-tox over HMM checkpoints.
+- **plot_transformation_distributions** — Detoxify/logit/EAP histograms (needs `--dump_eap_path`).
+- **plot_role_quality_scatter** — prompting vs TRACE per RoleBench character.
+
+See [evaluations/README.md](evaluations/README.md) for the full CLI reference,
+the scored-CSV schema, and caching/resumability details.
+
 
 ## 🔬 Advanced Usage
 

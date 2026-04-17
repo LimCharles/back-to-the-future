@@ -40,6 +40,13 @@ def main():
     parser.add_argument("--num_generations", type=int, default=25, help="Generations per prompt")
     parser.add_argument("--generation_batch_size", type=int, default=5, help="Sequences per HF generate call")
     parser.add_argument("--prompt_batch_size", type=int, default=1, help="Prompts processed together")
+    parser.add_argument("--hmm_variant", type=str, default="hmm1",
+                        choices=["hmm1", "hmm2", "chmm"],
+                        help="HMM variant identifier (recorded in outputs)")
+    parser.add_argument("--no_decode_transform", action="store_true",
+                        help="Skip sigmoid-logit reshaping of EAP at decode time (for ablation)")
+    parser.add_argument("--dump_eap_path", type=str, default=None,
+                        help="Path to dump first-step per-token EAP as .npz")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--device", type=str, default=None)
 
@@ -53,12 +60,12 @@ def main():
     if args.baseline:
         output_path = os.path.join(
             PROJECT_ROOT,
-            f"results/comparison_a{args.a}_generated.csv"
+            f"results/generated/comparison_{args.hmm_variant}_a{args.a}_generated.csv"
         )
     else:
         output_path = os.path.join(
             PROJECT_ROOT,
-            f"results/detox_a{args.a}_generated.csv"
+            f"results/generated/detox_{args.hmm_variant}_a{args.a}_generated.csv"
         )
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
@@ -98,6 +105,8 @@ def main():
             expectation_cache=expectation_cache,
             a=args.a,  # Strength of HMM guidance
             tokenizer=gen_tokenizer,
+            decode_transform=not args.no_decode_transform,
+            dump_eap_path=args.dump_eap_path,
         )
     else:
         print("Running in baseline mode (no HMM guidance)")
@@ -139,11 +148,20 @@ def main():
         max_prompt_len = max(max_model_len - args.max_len - 10, 10)  # Reserve space for generation + safety margin
 
         # Batch tokenize all prompts in current batch
-        inputs = gen_tokenizer.batch_encode_plus(
+        # inputs = gen_tokenizer.batch_encode_plus(
+        #     prompt_texts,
+        #     return_tensors="pt",
+        #     padding=True,          # Pad shorter prompts to same length
+        #     truncation=True,       # Truncate longer prompts
+        #     max_length=max_prompt_len,
+        # )
+
+        # Batch encode plus didn't exist, weird error.
+        inputs = gen_tokenizer(
             prompt_texts,
             return_tensors="pt",
-            padding=True,          # Pad shorter prompts to same length
-            truncation=True,       # Truncate longer prompts
+            padding=True,
+            truncation=True,
             max_length=max_prompt_len,
         )
         prompt_ids = inputs.input_ids.to(device)

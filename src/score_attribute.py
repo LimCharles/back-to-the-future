@@ -132,7 +132,7 @@ def main():
     print()
     print("🔧 Next steps:")
     print(f"   1. Train classifier: python src/fit.py --data_path {args.output_path} --attribute {args.attribute}")
-    print(f"   2. Use in generation: python src/generate.py --weights_path data/coefficients_{args.attribute}.csv")
+    print(f"   2. Use in generation: python src/generate.py --weights_path classifiers/coefficients_{args.attribute}.csv")
 
 if __name__ == "__main__":
     main()
