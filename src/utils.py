@@ -1,5 +1,6 @@
 import torch
 from .hmm import HMM
+from .sohmm import SOHMM
 import pandas as pd
 from typing import Tuple
 
@@ -8,7 +9,7 @@ torch.set_float32_matmul_precision('high')
 
 def load_hmm_model(hmm_model_path: str, device: str = 'cuda:0') -> HMM:
     """
-    Load the pretrained HMM model.
+    Load the pretrained first-order HMM model.
 
     Args:
         hmm_model_path (str): Path to the saved HMM model.
@@ -20,6 +21,28 @@ def load_hmm_model(hmm_model_path: str, device: str = 'cuda:0') -> HMM:
     hmm_model = HMM.from_pretrained(hmm_model_path, local_files_only=True).to(device)
     hmm_model.eval()
     return hmm_model
+
+
+def load_sohmm_model(sohmm_model_path: str, device: str = 'cuda:0') -> SOHMM:
+    """
+    Load the pretrained second-order HMM (SOHMM / SHMM) model.
+
+    Matches the sohmm-branch checkpoint format: alpha_exp (H,H,H),
+    beta (H,V) in log-space, gamma (H,H) in log-space. Uses
+    PyTorchModelHubMixin.from_pretrained to deserialize
+    safetensors/pytorch_model.bin.
+
+    Args:
+        sohmm_model_path (str): Path to the saved SOHMM directory.
+        device (str): Device to load the model on.
+
+    Returns:
+        SOHMM: Loaded SOHMM model.
+    """
+    sohmm_model = SOHMM.from_pretrained(sohmm_model_path, local_files_only=True).to(device)
+    sohmm_model.eval()
+    return sohmm_model
+
 
 def load_weights(weights_file: str, device: str = "cpu") -> torch.Tensor:
     """
