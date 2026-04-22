@@ -180,13 +180,12 @@ nontoxicity-notf, nonpoliticalness, role, neural baseline).
 
 ### Root
 - [.gitignore](.gitignore) — ignores envs/build artifacts/notebook state plus `results/**`, `classifiers/**`.
-- [FAQ.md](FAQ.md) — operational troubleshooting (env, scoring, CUDA).
 - [README.md](README.md) — human-first project intro and walkthrough.
 - [agent.md](agent.md) — this file.
 - [environment.yml](environment.yml) / [environment_cpu.yml](environment_cpu.yml) — conda envs (GPU / CPU).
 - [pyproject.toml](pyproject.toml) — project metadata.
 - [uv.lock](uv.lock) — locked dep graph.
-- [main.ipynb](main.ipynb) — empty placeholder.
+- [main.ipynb](main.ipynb) — tiny end-to-end smoke test: loads each of hmm1/hmm2/chmm, generates one short continuation per variant, scores with Detoxify. Kernel sanity check, not a benchmark.
 - [tutorial.ipynb](tutorial.ipynb) — upstream tutorial.
 
 ### Scripts ([scripts/](scripts/))

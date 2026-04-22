@@ -8,7 +8,7 @@ A research fork of [TRACE](https://github.com/yidouweng/trace) (Weng-Yidou et al
 | `hmm2` | Second-order HMM (SOHMM / SHMM) | Dense `alpha_exp (H, H, H)` | [src/logits_processor_sohmm.py](src/logits_processor_sohmm.py) |
 | `chmm` | Clone-hidden HMM | Sparse block transitions keyed by observed `(src_token, dst_token)` pairs | [src/logits_processor_chmm.py](src/logits_processor_chmm.py) |
 
-Full routing, file-by-file layout, and integration edges live in [agent.md](agent.md).
+Full routing, file-by-file layout, and integration edges live in [agent.md](agent.md). For a kernel smoke test that loads all three variants and scores one generation each, see [main.ipynb](main.ipynb).
 
 ## Pipeline at a glance
 
@@ -184,7 +184,7 @@ Additional tables available but not in the default driver:
 
 - [agent.md](agent.md) — authoritative routing map (variant dispatch, file-by-file, integration edges). Start here when adding a variant or a new metric.
 - [evaluations/README.md](evaluations/README.md) — per-table/plot CLI reference, caching/resumability notes.
-- [FAQ.md](FAQ.md) — environment / CUDA / scoring troubleshooting.
+- [main.ipynb](main.ipynb) — one-cell-per-step smoke test that loads each variant and scores a single generation.
 - [tutorial.ipynb](tutorial.ipynb) — upstream pedagogical walkthrough, kept for reference. For the fork's end-to-end pipeline, use this README and the scripts above instead.
 
 ## Citation & license
