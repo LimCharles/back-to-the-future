@@ -111,10 +111,10 @@ def main():
             weights_tensor = utils.load_weights(args.weights_path, device=device)
             sohmm_model.set_weights(weights_tensor)
             expectation_cache = sohmm_model.compute_backward_expectation(T=args.max_len)
-            if args.no_decode_transform or args.dump_eap_path:
+            if args.no_decode_transform:
                 print(
-                    "Warning: --no_decode_transform and --dump_eap_path are not supported "
-                    "for --hmm_variant hmm2 and will be ignored.",
+                    "Warning: --no_decode_transform is not supported for --hmm_variant hmm2 "
+                    "and will be ignored (SOHMM kernel has no no-transform path).",
                     file=sys.stderr,
                 )
             hmm_processor = SOHmmGuidedLogitsProcessor(
@@ -122,6 +122,7 @@ def main():
                 expectation_cache=expectation_cache,
                 a=args.a,
                 tokenizer=gen_tokenizer,
+                dump_eap_path=args.dump_eap_path,
             )
         else:  # chmm
             raise NotImplementedError(

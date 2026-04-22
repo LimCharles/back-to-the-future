@@ -101,11 +101,8 @@ def main():
     fig.savefig(out_path, dpi=args.dpi, bbox_inches="tight")
     plt.close(fig)
 
-    # Save companion JSON
-    json_path = os.path.join(
-        PROJECT_ROOT, "evaluations", "results",
-        "fluency_toxicity_tradeoff_data.json",
-    )
+    # Save companion JSON next to the PNG
+    json_path = os.path.join(args.output_dir, "fluency_toxicity_tradeoff_data.json")
     with open(json_path, "w") as f:
         json.dump(rows, f, indent=2)
 

@@ -1,6 +1,6 @@
 # TRACE Experiments
 
-Model-agnostic evaluation harness that reproduces quantitative results from the TRACE paper for any HMM variant (`hmm1`, `hmm2`, `chmm`).
+Model-agnostic evaluation harness that reproduces quantitative results from the TRACE paper. Supported variants: `hmm1` (first-order HMM) and `hmm2` (SOHMM / second-order HMM). `chmm` is **not implemented** — passing it to `src/generate.py` raises `NotImplementedError`.
 
 ## Directory Structure
 
@@ -24,7 +24,7 @@ evaluations/
 │   └── table8_lm_judge.py                  # LM-as-judge scores
 ├── plots/
 │   ├── plot_fluency_toxicity_tradeoff.py   # Figure 3
-│   ├── plot_hmm_quality_vs_toxicity.py     # Checkpoint sweep twin-axis
+│   ├── plot_hmm_quality_vs_toxicity.py     # Capacity-vs-detox scatter (across HMM sizes)
 │   ├── plot_transformation_distributions.py # Score & EAP histograms
 │   └── plot_role_quality_scatter.py        # Prompting vs TRACE per character
 ├── (outputs → results/tables/ and results/figures/ at repo root)
@@ -93,21 +93,40 @@ python -m evaluations.tables.table8_lm_judge \
 
 ```bash
 python -m evaluations.plots.plot_fluency_toxicity_tradeoff
-python -m evaluations.plots.plot_transformation_distributions
-python -m evaluations.plots.plot_hmm_quality_vs_toxicity --checkpoints_dir models/checkpoints/
+# Pass one EAP .npz dump per variant (produced by src/generate.py --dump_eap_path)
+python -m evaluations.plots.plot_transformation_distributions \
+    --eap_dumps results/figures/eap_hmm1.npz results/figures/eap_hmm2_256.npz \
+    --eap_labels hmm1 hmm2_256
+# Capacity-vs-detox scatter across finished HMM checkpoints (no training-step sweep required)
+python -m evaluations.plots.plot_hmm_quality_vs_toxicity \
+    --models "hmm1:models/hmm_gpt2-large_bttf,hmm2:models/hmm2_gpt2-large_64_bttf,hmm2:models/hmm2_gpt2-large_256_bttf"
 python -m evaluations.plots.plot_role_quality_scatter --role_results results/figures/role_eval.json
 ```
 
 ## Variant Flag
 
-Every script accepts `--hmm_variant {hmm1,hmm2,chmm}`. The variant is:
+Every script accepts `--hmm_variant {hmm1,hmm2}`. The variant is:
 - Recorded in every output JSON and filename
 - Validated during plotting/aggregation — missing variant metadata fails loudly
 
 Multiple variants can be evaluated side-by-side:
 ```bash
-python -m evaluations.tables.table1_detoxification --variants hmm1,hmm2,chmm
+python -m evaluations.tables.table1_detoxification --variants hmm1,hmm2
 ```
+
+`chmm` appears as a reserved choice in some argparse definitions but will raise
+`NotImplementedError` at `src/generate.py` because there is no `src/chmm.py` and no
+`utils.load_chmm_model`. Ignore `models/chmm_gpt2-large_bttf/` and any
+`comparison_chmm_*` artifacts — they are pre-SOHMM-refactor detritus.
+
+### Distinguishing hmm2 checkpoint sizes
+
+`src/generate.py`'s default output path keys on `--hmm_variant` only, so two
+`hmm2` checkpoints of different hidden sizes (e.g., H=64 vs H=256) will clobber
+each other. When running side-by-side, either pass an explicit output filename
+with `--output_csv`/`--scored_csv` or rename after the fact. The existing
+`comparison_hmm2_64_a1.0_*.csv` and `comparison_hmm2_256_a1.0_*.csv` use the
+`hmm2_<H>` convention adopted throughout this repo.
 
 ## Resumability
 

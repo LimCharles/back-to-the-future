@@ -1,7 +1,8 @@
+import numpy as np
 import torch
 import torch.nn.functional as F
 from transformers import LogitsProcessor, PreTrainedTokenizer
-from typing import List, Dict, Tuple, Any
+from typing import List, Dict, Tuple, Any, Optional
 
 # We'll use logsumexp directly for the 3D/4D tensors to maintain clarity
 # but we can still import stable_mvm if needed for consistency.
@@ -63,26 +64,69 @@ def logit_adjustment_so(
     
     return adjusted_logits
 
+
+def _compute_eap_for_dump_so(
+    log_alpha_prev: torch.Tensor,          # (B, H, H)
+    log_A: torch.Tensor,                   # (1, H, H, H)
+    log_B: torch.Tensor,                   # (H, V)
+    expectation_zm: torch.Tensor,          # (H, H)
+    product_generated_toxicity: torch.Tensor,  # (B,)
+    exp_weights: torch.Tensor,             # (V,)
+    a: float,
+    epsilon: float = 1e-12,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """
+    Second-order EAP dump helper — mirrors ``logit_adjustment_so`` up to the
+    sigmoid-logit stage without the final LM-reweight.
+
+    Returns (eap_pre_transform, eap_post_transform) both of shape (B, V), same
+    contract as ``src/logits_processor.py:_compute_eap_for_dump`` so
+    ``plot_transformation_distributions.py`` can read both dumps uniformly.
+    """
+    with torch.no_grad():
+        log_p_zm_x_less_m = torch.logsumexp(log_alpha_prev.unsqueeze(3) + log_A, dim=1)  # (B, j, k)
+        log_p_zt_marginal = torch.logsumexp(log_p_zm_x_less_m, dim=1)                   # (B, k)
+        log_p_x = torch.vmap(stable_mvm, in_dims=(None, 0))(log_B.T, log_p_zt_marginal) # (B, V)
+
+        log_expectation_zm_x_less_m = log_p_zm_x_less_m + torch.log(expectation_zm.unsqueeze(0) + epsilon)
+        log_expectation_weighted_zt = torch.logsumexp(log_expectation_zm_x_less_m, dim=1)  # (B, k)
+        log_num = torch.vmap(stable_mvm, in_dims=(None, 0))(log_B.T, log_expectation_weighted_zt)  # (B, V)
+
+        log_expectation_xm = log_num - log_p_x
+        log_expectation_xm += torch.log(product_generated_toxicity.unsqueeze(1) + epsilon) + torch.log(exp_weights + epsilon)
+
+        eap_pre = torch.exp(log_expectation_xm)
+        eap_pre = torch.clamp(eap_pre, epsilon, 1 - epsilon)
+
+        logit_eap = torch.log(eap_pre / (1 - eap_pre + epsilon) + epsilon)
+        eap_post = torch.sigmoid(a * logit_eap)
+
+        return eap_pre, eap_post
+
+
 class SOHmmGuidedLogitsProcessor(LogitsProcessor):
     def __init__(self,
                  hmm_model: Any,
                  expectation_cache: torch.Tensor,
                  a: float = 1.0,
                  tokenizer: PreTrainedTokenizer | None = None,
-                 epsilon: float = 1e-12):
-        
+                 epsilon: float = 1e-12,
+                 dump_eap_path: Optional[str] = None):
+
         required_attrs = ['alpha_exp', 'beta', 'compute_forward_probability']
         for attr in required_attrs:
             if not hasattr(hmm_model, attr):
                 raise AttributeError(f"SOHMM model missing required attribute: {attr}")
-        
+
         self.hmm_model = hmm_model
         self._model_device = hmm_model.alpha_exp.device
-        
+
         self.expectation_cache = expectation_cache.to(self._model_device)
         self.a = a
         self.epsilon = epsilon
         self.tokenizer = tokenizer
+        self.dump_eap_path = dump_eap_path
+        self._eap_dumped = False
 
         # Second-order A is (H, H, H)
         self.log_A = torch.log(self.hmm_model.alpha_exp.to(self._model_device) + self.epsilon).unsqueeze(0)
@@ -135,9 +179,22 @@ class SOHmmGuidedLogitsProcessor(LogitsProcessor):
             
             if self.generation_step >= len(self.expectation_cache):
                 return scores
-            
+
             expectation_zm = self.expectation_cache[self.generation_step] # (H, H)
-            
+
+            if self.dump_eap_path and self.generation_step == 0 and not self._eap_dumped:
+                eap_pre, eap_post = _compute_eap_for_dump_so(
+                    self.log_alpha_prev, self.log_A, self.log_B,
+                    expectation_zm, self.product_generated_toxicity,
+                    self.exp_weights, self.a, self.epsilon,
+                )
+                np.savez(
+                    self.dump_eap_path,
+                    eap_pre_transform=eap_pre.cpu().numpy(),
+                    eap_post_transform=eap_post.cpu().numpy(),
+                )
+                self._eap_dumped = True
+
             adjusted_logits = logit_adjustment_so(
                 log_alpha_prev=self.log_alpha_prev,
                 log_A=self.log_A,
