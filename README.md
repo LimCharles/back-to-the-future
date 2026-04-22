@@ -1,289 +1,195 @@
-# TRACE: HMM-Guided Text Generation
+# TRACE fork: HMM vs SHMM vs CHMM for controllable detoxification
 
-**Tractable Reasoning for Adaptable Controllable gEneration**
+A research fork of [TRACE](https://github.com/yidouweng/trace) (Weng-Yidou et al., ICML 2025) that extends the decode-time guidance kernel to three HMM variants and compares them head-to-head on RealToxicityPrompts:
 
-TRACE is a method for controllable text generation that uses Hidden Markov Models (HMMs) to guide language models away from unwanted attributes (like toxicity) while maintaining fluency and diversity.
+| Variant | Meaning | Hidden structure | Decode kernel |
+|---|---|---|---|
+| `hmm1` | First-order HMM (upstream baseline) | Dense `alpha_exp (H, H)` | [src/logits_processor.py](src/logits_processor.py) |
+| `hmm2` | Second-order HMM (SOHMM / SHMM) | Dense `alpha_exp (H, H, H)` | [src/logits_processor_sohmm.py](src/logits_processor_sohmm.py) |
+| `chmm` | Clone-hidden HMM | Sparse block transitions keyed by observed `(src_token, dst_token)` pairs | [src/logits_processor_chmm.py](src/logits_processor_chmm.py) |
 
-## 🚀 Quick Start
+Full routing, file-by-file layout, and integration edges live in [agent.md](agent.md).
 
-### 1. Setup API Key
+## Pipeline at a glance
 
-Get a [Google Perspective API key](https://developers.perspectiveapi.com/s/docs-get-started) and configure it:
-
-**Recommended**: Edit `environment.yml` (or `environment_cpu.yml`), replace `'your_key_here'` with your actual key.
-
-**Alternative**: Set environment variable (temporary):
-```bash
-export PERSPECTIVE_API_KEY="your_key_here"
+```
+  fit classifiers  →  generate (× 6 variants)  →  score (Detoxify + GPT2-XL PPL + dist-n)  →  tables/plots
+  classifiers/*.csv   results/generated/*.csv       results/evaluation/*.csv                   results/tables/ + results/figures/
 ```
 
-### 2. Setup Environment
+The four driver scripts wire the full pipeline; each runs as a standalone SLURM batch (H100 partition) or inline via `bash`:
 
-**Recommended**: Use `environment.yml` (auto-detects CUDA version):
+| Script | Does |
+|---|---|
+| [scripts/fit.sh](scripts/fit.sh) | Fits the attribute Lasso classifiers (nontoxicity + variants) |
+| [scripts/gen_all.sh](scripts/gen_all.sh) | Generates 25 continuations per RTP_test prompt for every variant (hmm1, hmm2_{64, 256}, chmm_{uniform6, uniform8, quadratic_log}) |
+| [scripts/score_all.sh](scripts/score_all.sh) | Scores every generated CSV with Detoxify + GPT-2-XL PPL + distinct-n |
+| [scripts/analyze.sh](scripts/analyze.sh) | Builds Tables 1 & 6 and the three summary plots from the scored CSVs |
+
+## 1. Setup
 
 ```bash
-conda env create -f environment.yml
+conda env create -f environment.yml   # GPU; auto-detects CUDA
 conda activate trace
 ```
 
-**If you encounter CUDA issues**: Use CPU-only environment:
+CPU-only: use `environment_cpu.yml`. Toxicity scoring uses [Detoxify](https://github.com/unitaryai/detoxify) locally, so no Perspective API key is needed.
+
+## 2. Data & models
+
+### Data
 
 ```bash
-conda env create -f environment_cpu.yml
-conda activate trace
-```
-
-The GPU environment automatically detects and installs the correct PyTorch version for your CUDA installation (supports CUDA 11.8+ and 12.x).
-
-### 3. Download Data and Models
-
-Download all required data files at once:
-
-```bash
-# 1. Download pre-trained HMM model (~850MB)
-python -c "
-from huggingface_hub import snapshot_download
-snapshot_download(repo_id='gwenweng/hmm-gpt2-large', local_dir='models/hmm_gpt2-large_uncon_seq-len-32_4096_10M')
-"
-
-# 2. Download RTP training data (~6.6MB) - for custom classifier training
 cd data/
 wget https://github.com/yidouweng/trace/releases/download/v1.0.0/RTP_train.jsonl.tar.gz
-tar -xzf RTP_train.jsonl.tar.gz
-
-# 3. Download RTP test data (~6.6MB) - for large-scale evaluation  
 wget https://github.com/yidouweng/trace/releases/download/v1.0.0/RTP_test.jsonl.tar.gz
+tar -xzf RTP_train.jsonl.tar.gz
 tar -xzf RTP_test.jsonl.tar.gz
 cd ..
 ```
 
-**What you just downloaded:**
-- **HMM Model**: Pre-trained Hidden Markov Model for toxicity control
-- **RTP Train**: 100k prompts for training custom classifiers (optional)
-- **RTP Test**: 10k prompts for large-scale evaluation (optional)
-- **Demo prompts**: Already included in `data/prompts.jsonl` (12 examples)
+`data/prompts.jsonl` (12 demo prompts) is already tracked. `data/rolebench/` and `data/misra_news.json` ship for RoleBench and composition experiments.
 
-### 4. Run Tutorial
+### Models
 
-🎯 **Start here**: Open and run **[tutorial.ipynb](tutorial.ipynb)** for a complete interactive walkthrough!
+Expected layout under `models/` (gitignored; see [agent.md §5](agent.md) for the full spec):
 
-#### **Starting Jupyter Notebook**
+```
+models/
+├── hmm_gpt2-large_bttf/                    # hmm1, H=4096 (fork retrain)
+├── hmm_gpt2-large_uncon_seq-len-32_4096_10M/  # hmm1, H=4096 (upstream paper checkpoint)
+├── hmm2_gpt2-large_64_bttf/                 # hmm2, H=64
+├── hmm2_gpt2-large_256_bttf/                # hmm2, H=256
+├── chmm_gpt-2-large_uniform6_bttf/          # chmm, uniform-6 init
+├── chmm_gpt-2-large_uniform8_bttf/          # chmm, uniform-8 init
+└── chmm_gpt-2-large_quadratic_log_bttf/     # chmm, quadratic-log init
+```
+
+Upstream `hmm1` checkpoint:
+
 ```bash
-# Make sure you're in the trace environment
-conda activate trace
-
-# Option A: Jupyter Lab (recommended)
-jupyter lab
-
-# Option B: Classic Jupyter Notebook  
-jupyter notebook
-
+python -c "from huggingface_hub import snapshot_download; \
+  snapshot_download(repo_id='gwenweng/hmm-gpt2-large', \
+                    local_dir='models/hmm_gpt2-large_uncon_seq-len-32_4096_10M')"
 ```
 
-#### **Important**: 
-- **Always activate `trace` environment first** - the base environment lacks required packages
-- **In your editor**: Select the `trace` environment as the Python interpreter for the notebook
-- **Kernel issues**: If notebook shows wrong kernel, click the kernel selector (top right) and choose `trace`
+`hmm2` and `chmm` checkpoints come from our own training runs and from the [sukumar1612/Ctrl-G `CHMM_distillation`](https://github.com/sukumar1612/Ctrl-G/tree/sukumar/CHMM_distillation) branch respectively.
 
-The tutorial demonstrates:
-- Environment setup and verification  
-- Text generation with TRACE vs baseline comparison
-- Toxicity, fluency, and diversity evaluation
-- Analysis of where TRACE successfully reduces toxicity
+## 3. Fit classifiers
 
-## 📁 Repository Structure
+The attribute Lasso classifiers produce the `Coefficient` columns the decoder multiplies into the sigmoid-logit guidance. RTP_train already carries per-prompt toxicity labels, so `fit.py` can run directly; custom attributes are labelled first via zero-shot.
 
-```
-trace/
-├── tutorial.ipynb          # 🎯 START HERE - Interactive tutorial
-├── src/
-│   ├── generate.py         # Text generation script
-│   ├── score.py            # Evaluation metrics  
-│   ├── fit.py              # Train custom classifiers
-│   ├── score_attribute.py  # Score custom attributes with zero-shot
-│   └── ...                 # Core implementation
-├── data/                   # Raw inputs only (gitignored; pre-existing tracked files remain)
-│   ├── prompts.jsonl       # Demo prompts (12 examples)
-│   ├── coefficients.csv    # Pre-trained toxicity classifier (bundled with TRACE)
-│   ├── RTP_train.jsonl     # Training data (100k prompts)
-│   ├── RTP_test.jsonl      # Test data (10k prompts)
-│   ├── misra_news.json     # Misra News Category dataset (for nonpoliticalness)
-│   └── rolebench/          # RoleBench JSONL splits
-├── classifiers/            # Locally-fit classifiers (gitignored)
-│   ├── coefficients_nontoxicity.csv
-│   ├── coefficients_nonpoliticalness.csv
-│   ├── role/               # Per-character role classifiers
-│   └── neural_classifier_*.pt
-├── results/                # Gitignored
-│   ├── generated/          # _generated.csv, _scored.csv from src/generate.py + src/score.py
-│   └── evaluation/         # table*.json/csv, plot*.png from the eval harness
-├── models/
-│   ├── hmm_gpt2-large_uncon_seq-len-32_4096_10M/  # TRACE-paper HMM (retrained w/ new data)
-│   └── hmm_gpt2-large_bttf/                        # Our group's base HMM (hmm1 variant)
-├── evaluations/            # Model-agnostic experiment harness (tables + plots)
-│   ├── tables/             # table1..table8 (detox, ablation, timing, composition, ...)
-│   ├── plots/              # fluency-tox tradeoff, HMM-quality sweep, tf distributions, roles
-│   ├── classifiers/        # fit scripts for nontoxicity, nonpoliticalness, role, neural baseline
-│   ├── generation_runner.py  # Wraps src/generate.py + src/score.py
-│   ├── judge.py            # LM-as-judge (Llama-3.3-70B-Instruct)
-│   ├── metrics.py          # Shared metrics (max-tox, prob>0.5, dist-n, PPL, cond. entropy)
-│   └── csv_schema.py       # Canonical scored-CSV schema + validator
-├── environment.yml         # GPU environment
-└── environment_cpu.yml     # CPU environment
+```bash
+# Nontoxicity (standard): b=10, c=3 logit transform
+python -m evaluations.classifiers.fit_nontoxicity
+#   → classifiers/coefficients_nontoxicity.csv
+
+# Nontoxicity without logit transform (for Table 2 ablation)
+python -m evaluations.classifiers.fit_nontoxicity --b 1 --c 0 \
+    --output_path classifiers/coefficients_nontoxicity_notf.csv
+
+# Nonpoliticalness (for Table 5 composition)
+python -m evaluations.classifiers.fit_nonpoliticalness
+#   → classifiers/coefficients_nonpoliticalness.csv
+
+# Per-character RoleBench classifiers
+python -m evaluations.classifiers.fit_role
+#   → classifiers/role/<character>.csv + classifiers/role/manifest.json
+
+# DistilBERT neural baseline (Table 6)
+python -m evaluations.classifiers.fit_neural_baseline --attribute toxicity
+#   → classifiers/neural_classifier_toxicity.pt
 ```
 
-## 📊 Evaluations Harness
+For an arbitrary custom attribute (DeBERTa zero-shot labels → Lasso):
 
-`evaluations/` reproduces the paper's quantitative results. Every script takes
-`--hmm_variant {hmm1,hmm2,chmm}` and records the variant in its output JSON/CSV.
+```bash
+python src/score_attribute.py --attribute politics      # writes data/RTP_train_politics.jsonl
+python src/fit.py --data_path data/RTP_train_politics.jsonl --attribute politics
+```
 
-**Tables** (under `evaluations/tables/`):
-- **table1_detoxification** — full RTP sweep; avg max-tox, prob>0.5, dist-2/3, PPL.
-- **table2_transformation_ablation** — logit transform toggled at train/decode time.
-- **table3_roles** — qualitative role-play side-by-side across whichever HMM dirs exist.
-- **table4_timing** — classifier fit time + TRACE/baseline per-token inference ratio.
-- **table5_composition** — nontoxicity × nonpoliticalness composition (w'=w¹·w²).
-- **table6_factorizability** — CE loss: Lasso factorised vs DistilBERT neural (no HMM).
-- **table7_conditional_entropy** — token-level conditional entropy from a scored CSV.
-- **table8_lm_judge** — Llama-3.3-70B judge scores (resumable via checkpoint).
+[scripts/fit.sh](scripts/fit.sh) wraps the nontoxicity fit for SLURM.
 
-**Plots** (under `evaluations/plots/`):
-- **plot_fluency_toxicity_tradeoff** — Figure 3; consumes `table1_detoxification.json`.
-- **plot_hmm_quality_vs_toxicity** — twin-axis val-LL vs avg-max-tox over HMM checkpoints.
-- **plot_transformation_distributions** — Detoxify/logit/EAP histograms (needs `--dump_eap_path`).
-- **plot_role_quality_scatter** — prompting vs TRACE per RoleBench character.
+## 4. Generate
 
-See [evaluations/README.md](evaluations/README.md) for the full CLI reference,
-the scored-CSV schema, and caching/resumability details.
+Direct `src/generate.py` invocation:
 
-
-## 🔬 Advanced Usage
-
-### Custom Generation
 ```bash
 python src/generate.py \
-    --hmm_model_path models/hmm_gpt2-large_uncon_seq-len-32_4096_10M \
-    --prompts_path data/prompts.jsonl \
-    --a 1.0 --max_len 20 --num_generations 3
+  --hmm_variant chmm \
+  --hmm_model_path models/chmm_gpt-2-large_uniform6_bttf \
+  --prompts_path data/prompts.jsonl \
+  --weights_path classifiers/coefficients_nontoxicity.csv \
+  --a 1.0 --max_len 20 --num_generations 5 --baseline
 ```
 
-### Large-Scale Evaluation
+- `--hmm_variant` picks the decoder kernel: `hmm1 | hmm2 | chmm`.
+- `--a` is the guidance strength (0 = no guidance, 1 = paper default, >1 = aggressive).
+- `--baseline` runs unguided GPT-2 alongside TRACE into `results/generated/comparison_*_generated.csv`. Drop it for TRACE-only runs (`results/generated/detox_*_generated.csv`).
+- `--dump_eap_path <path>.npz` writes first-step per-token expected-attribute-probability dumps; all three kernels share the same `.npz` schema for downstream plotting.
 
-Now that you have the RTP test dataset (10k prompts), you can run comprehensive evaluation:
+The full sweep over all six variants on RTP_test lives in [scripts/gen_all.sh](scripts/gen_all.sh).
+
+## 5. Score
+
+`src/score.py` runs locally: **Detoxify `'original'`** for toxicity, **GPT-2-XL** for perplexity, string-level distinct-n.
 
 ```bash
-# Generate text for all 10k test prompts
-python src/generate.py --prompts_path data/RTP_test.jsonl
-
-# Score the generated text for toxicity, fluency, and diversity
-python src/score.py
+python src/score.py \
+  --input_csv results/generated/comparison_chmm_uniform6_a1.0_generated.csv \
+  --output_csv results/evaluation/comparison_chmm_uniform6_a1.0_scored.csv
 ```
 
-This will take significantly longer than the 12-prompt demo, but provides robust statistical evaluation.
+Flags:
+- `--toxicity_only` skips the fluency pass (much faster; sets `mean_fluency`/`dist-*` to `NA`).
+- `--perp_model gpt2-large` drops perplexity model size if VRAM is tight.
 
-### Train Custom Classifiers
+Scored-CSV schema is in [evaluations/csv_schema.py](evaluations/csv_schema.py). Full sweep in [scripts/score_all.sh](scripts/score_all.sh); Detoxify scores are cached under `evaluations/.score_cache/` by SHA1 of continuation text so re-scoring is cheap.
 
-TRACE can control any attribute, not just toxicity! With the RTP training data (100k prompts) you downloaded, you can train classifiers for any attribute:
+## 6. Tables & plots
 
-#### **Option 1: Score RTP Data for Custom Attribute**
+[scripts/analyze.sh](scripts/analyze.sh) runs the end-to-end table+plot chain:
+
 ```bash
-# Example: Train a "politics" classifier
-# 1. Score training data for your attribute (just provide keyword!)
-python src/score_attribute.py --attribute politics
-
-# 2. Train classifier  
-python src/fit.py --data_path data/RTP_train_politics.jsonl --attribute politics
-
-# 3. Use in generation
-python src/generate.py --weights_path data/coefficients_politics.csv --a 1.0
+bash scripts/analyze.sh
 ```
 
-**Other example attributes**: `sports`, `emotion`, `formality`, `sentiment`, `entertainment`
+Individual entry points under [evaluations/](evaluations/). Full CLI reference: [evaluations/README.md](evaluations/README.md).
 
-#### **Option 2: Use Your Own Dataset**
-```bash
-# Prepare your data in the same format as RTP_train.jsonl:
-# {"prompt": {"text": "...", "your_attribute": 0.8}, "continuation": {"text": "...", "your_attribute": 0.2}}
+Key outputs (`results/tables/`, `results/figures/`):
 
-python src/fit.py --data_path your_custom_data.jsonl --attribute your_attribute
-```
+- **`table1_detoxification.{json,csv}`** — per-variant TRACE + baseline: avg max-tox, prob(tox>0.5), dist-2/3, perplexity.
+- **`fluency_toxicity_tradeoff.png`** — Figure 3 equivalent, hued by variant.
+- **`hmm_capacity_vs_toxicity.png`** — H (log scale) vs avg max-tox across all six variants; optional twin-axis val-LL.
+- **`transformation_distributions.png`** — Detoxify score transform + per-variant pre/post EAP histograms.
 
-## 🛠️ Troubleshooting
+Additional tables available but not in the default driver:
 
-### **Environment Setup Issues**
+- `table2_transformation_ablation` (hmm1-only logit-transform ablation)
+- `table3_roles` (qualitative role-play side-by-side)
+- `table4_timing` (fit + per-token inference ratio)
+- `table5_composition` (nontoxicity × nonpoliticalness)
+- `table6_factorizability` (Lasso vs neural CE)
+- `table7_conditional_entropy` (from scored CSV)
+- `table8_lm_judge` (Llama-3.3-70B judge; resumable)
 
-**CUDA/PyTorch Import Errors**
-```bash
-# Error: "undefined symbol: cudaLaunchKernelExC" or PyTorch import fails
-# This indicates CUDA version mismatch
-```
+## What's different from upstream TRACE
 
-**Solution**: The environment automatically detects and installs the correct CUDA version. If you encounter CUDA issues:
+- **Two new decode kernels**: `hmm2` ([src/sohmm.py](src/sohmm.py) + [src/logits_processor_sohmm.py](src/logits_processor_sohmm.py)) and `chmm` ([src/chmm.py](src/chmm.py) + [src/logits_processor_chmm.py](src/logits_processor_chmm.py)). Upstream has only `hmm1`. CHMM is ported from the [`sukumar1612/Ctrl-G`](https://github.com/sukumar1612/Ctrl-G/tree/sukumar/CHMM_distillation) `CHMM_distillation` branch and adapted to the `(model, expectation_cache, a, tokenizer, dump_eap_path)` processor contract.
+- **Reproducibility harness**: [evaluations/](evaluations/) (tables, plots, classifier fits, generation runner, LM-as-judge) — none of this existed upstream.
+- **Local toxicity scoring**: Detoxify replaces the Perspective API. No rate limits, no key.
+- **SLURM drivers**: [scripts/](scripts/) targets H100 partitions.
 
-1. **Check your CUDA version**:
-   ```bash
-   nvidia-smi  # Look for "CUDA Version: X.X" in the output
-   ```
+## Where to read next
 
-2. **Recreate environment** (this will auto-detect your CUDA version):
-   ```bash
-   conda deactivate
-   conda env remove -n trace -y
-   conda env create -f environment.yml
-   conda activate trace
-   ```
+- [agent.md](agent.md) — authoritative routing map (variant dispatch, file-by-file, integration edges). Start here when adding a variant or a new metric.
+- [evaluations/README.md](evaluations/README.md) — per-table/plot CLI reference, caching/resumability notes.
+- [FAQ.md](FAQ.md) — environment / CUDA / scoring troubleshooting.
+- [tutorial.ipynb](tutorial.ipynb) — upstream pedagogical walkthrough, kept for reference. For the fork's end-to-end pipeline, use this README and the scripts above instead.
 
-3. **Test installation**:
-   ```bash
-   python -c "import torch; print(f'PyTorch: {torch.__version__}'); print(f'CUDA available: {torch.cuda.is_available()}')"
-   ```
+## Citation & license
 
-4. **Still having issues?** Use CPU-only environment:
-   ```bash
-   conda env create -f environment_cpu.yml
-   conda activate trace
-   ```
-
-**Environment Detection**
-- **CUDA 11.8+**: Use `environment.yml` (recommended)
-- **CUDA 12.x**: Use `environment.yml` (auto-detects)
-- **No CUDA/CPU only**: Use `environment_cpu.yml`
-- **Unsure?**: Try `environment.yml` first, fallback to `environment_cpu.yml`
-
-### **Jupyter Notebook Issues**
-
-**Can't open notebook in VS Code/Cursor?**
-1. **Activate environment**: `conda activate trace`
-2. **Start Jupyter server**: `jupyter lab --no-browser --port=8888`
-3. **In editor**: Select `trace` Python interpreter
-4. **Connect**: Point editor to `http://localhost:8888`
-
-**Wrong kernel/environment in notebook?**
-- Click the kernel selector (top-right of notebook)
-- Choose `Python 3 (ipykernel)` from `trace` environment
-- If not listed: `conda activate trace && python -m ipykernel install --user --name=trace`
-
-**"Module not found" errors?**
-- Check you're in `trace` environment: `echo $CONDA_DEFAULT_ENV`
-- If showing `base`: `conda activate trace` then restart Jupyter
-
-### **Other Issues**
-
-**Having more issues?** Check our comprehensive **[FAQ.md](FAQ.md)** for solutions to:
-- Environment setup problems
-- Scoring issues (0.0/NA results)
-- CUDA/memory errors  
-- API key configuration
-- Performance optimization
-
-## 📈 Expected Results
-
-With default settings, TRACE typically achieves:
-- **70%+ toxicity reduction** vs baseline
-- **Minimal fluency impact** (<10% perplexity change)
-- **Maintained diversity** (>85% distinct-2)
-
-## 📜 Citation
+MIT License. Upstream paper:
 
 ```bibtex
 @inproceedings{yidou-weng2025trace,
@@ -293,7 +199,3 @@ With default settings, TRACE typically achieves:
   year={2025}
 }
 ```
-
-## 📄 License
-
-This project is licensed under the MIT License.

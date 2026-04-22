@@ -1,6 +1,6 @@
 # TRACE Experiments
 
-Model-agnostic evaluation harness that reproduces quantitative results from the TRACE paper. Supported variants: `hmm1` (first-order HMM) and `hmm2` (SOHMM / second-order HMM). `chmm` is **not implemented** — passing it to `src/generate.py` raises `NotImplementedError`.
+Model-agnostic evaluation harness that reproduces quantitative results from the TRACE paper. Supported variants: `hmm1` (first-order HMM), `hmm2` (SOHMM / second-order HMM), and `chmm` (clone-hidden HMM). See [../agent.md](../agent.md) for the full variant-dispatch table.
 
 ## Directory Structure
 
@@ -16,7 +16,7 @@ evaluations/
 │   └── fit_neural_baseline.py              # DistilBERT baseline (Table 6)
 ├── tables/
 │   ├── table1_detoxification.py            # Full RTP eval (10k × 25)
-│   ├── table2_transformation_ablation.py   # Logit transform ablation
+│   ├── table2_transformation_ablation.py   # Logit transform ablation (hmm1 only)
 │   ├── table4_timing.py                    # Wall-clock measurements
 │   ├── table5_composition.py               # Nontoxicity + nonpoliticalness
 │   ├── table6_factorizability.py           # CE loss: factorised vs neural
@@ -24,7 +24,7 @@ evaluations/
 │   └── table8_lm_judge.py                  # LM-as-judge scores
 ├── plots/
 │   ├── plot_fluency_toxicity_tradeoff.py   # Figure 3
-│   ├── plot_hmm_quality_vs_toxicity.py     # Capacity-vs-detox scatter (across HMM sizes)
+│   ├── plot_hmm_quality_vs_toxicity.py     # Capacity-vs-detox scatter (all variants)
 │   ├── plot_transformation_distributions.py # Score & EAP histograms
 │   └── plot_role_quality_scatter.py        # Prompting vs TRACE per character
 ├── (outputs → results/tables/ and results/figures/ at repo root)
@@ -34,7 +34,7 @@ evaluations/
 
 ## Prerequisites
 
-- The `--hmm_variant` flag on `src/generate.py` (already added).
+- The `--hmm_variant` flag on `src/generate.py` (already wired for all three variants).
 - For the full 10k-prompt evaluation, download RealToxicityPrompts:
   ```bash
   # The DExperts 10k test split should be saved as data/rtp_10k.jsonl
@@ -42,6 +42,7 @@ evaluations/
   ```
 - For role-play evaluations, `ZenMoore/RoleBench` is downloaded automatically.
 - For Table 8, access to `meta-llama/Llama-3.3-70B-Instruct` on a GPU with ≥80GB VRAM.
+- Three `chmm` init variants ship: `uniform6`, `uniform8`, `quadratic_log`. Load them from `models/chmm_gpt-2-large_<init>_bttf/` via the reference-format `model.pt` checkpoint schema (single-dict payload with `config`, `gamma`, `pair_codes`, `transition_values`, `transition_floor`).
 
 ## Quick Start
 
@@ -65,15 +66,15 @@ python -m evaluations.classifiers.fit_neural_baseline --attribute toxicity
 ### 2. Run tables
 
 ```bash
-# Table 1: full detoxification eval
+# Table 1: full detoxification eval (pass multiple variants to sweep side-by-side)
 python -m evaluations.tables.table1_detoxification \
-    --prompts_path data/rtp_10k.jsonl --variants hmm1
+    --prompts_path data/rtp_10k.jsonl --variants hmm1,hmm2,chmm
 
-# Table 2: transformation ablation
+# Table 2: transformation ablation (hmm1 only — SOHMM/CHMM kernels have no no-transform path)
 python -m evaluations.tables.table2_transformation_ablation --hmm_variant hmm1
 
 # Table 4: timing
-python -m evaluations.tables.table4_timing --hmm_variant hmm1
+python -m evaluations.tables.table4_timing --hmm_variant chmm
 
 # Table 5: composition
 python -m evaluations.tables.table5_composition --hmm_variant hmm1
@@ -82,7 +83,7 @@ python -m evaluations.tables.table5_composition --hmm_variant hmm1
 python -m evaluations.tables.table6_factorizability
 
 # Table 7: conditional entropy
-python -m evaluations.tables.table7_conditional_entropy --hmm_variant hmm1
+python -m evaluations.tables.table7_conditional_entropy --hmm_variant chmm
 
 # Table 8: LM judge (slowest — resumable)
 python -m evaluations.tables.table8_lm_judge \
@@ -93,40 +94,41 @@ python -m evaluations.tables.table8_lm_judge \
 
 ```bash
 python -m evaluations.plots.plot_fluency_toxicity_tradeoff
+
 # Pass one EAP .npz dump per variant (produced by src/generate.py --dump_eap_path)
 python -m evaluations.plots.plot_transformation_distributions \
-    --eap_dumps results/figures/eap_hmm1.npz results/figures/eap_hmm2_256.npz \
-    --eap_labels hmm1 hmm2_256
-# Capacity-vs-detox scatter across finished HMM checkpoints (no training-step sweep required)
+    --eap_dumps \
+        results/figures/eap_hmm1.npz \
+        results/figures/eap_hmm2_256.npz \
+        results/figures/eap_chmm_uniform6.npz \
+    --eap_labels hmm1 hmm2_256 chmm_uniform6
+
+# Capacity-vs-detox scatter across finished HMM/SHMM/CHMM checkpoints
 python -m evaluations.plots.plot_hmm_quality_vs_toxicity \
-    --models "hmm1:models/hmm_gpt2-large_bttf,hmm2:models/hmm2_gpt2-large_64_bttf,hmm2:models/hmm2_gpt2-large_256_bttf"
+    --models "hmm1:models/hmm_gpt2-large_bttf,hmm2:models/hmm2_gpt2-large_64_bttf,hmm2:models/hmm2_gpt2-large_256_bttf,chmm:models/chmm_gpt-2-large_uniform6_bttf,chmm:models/chmm_gpt-2-large_uniform8_bttf,chmm:models/chmm_gpt-2-large_quadratic_log_bttf"
+
 python -m evaluations.plots.plot_role_quality_scatter --role_results results/figures/role_eval.json
 ```
 
 ## Variant Flag
 
-Every script accepts `--hmm_variant {hmm1,hmm2}`. The variant is:
+Every script accepts `--hmm_variant {hmm1,hmm2,chmm}`. The variant is:
 - Recorded in every output JSON and filename
 - Validated during plotting/aggregation — missing variant metadata fails loudly
 
 Multiple variants can be evaluated side-by-side:
 ```bash
-python -m evaluations.tables.table1_detoxification --variants hmm1,hmm2
+python -m evaluations.tables.table1_detoxification --variants hmm1,hmm2,chmm
 ```
 
-`chmm` appears as a reserved choice in some argparse definitions but will raise
-`NotImplementedError` at `src/generate.py` because there is no `src/chmm.py` and no
-`utils.load_chmm_model`. Ignore `models/chmm_gpt2-large_bttf/` and any
-`comparison_chmm_*` artifacts — they are pre-SOHMM-refactor detritus.
+### Distinguishing checkpoints of the same variant
 
-### Distinguishing hmm2 checkpoint sizes
+`src/generate.py`'s default output path keys on `--hmm_variant` only, so two checkpoints of the same variant (e.g. `hmm2` at H=64 vs H=256, or three `chmm` init variants) will clobber each other. When running side-by-side, either pass an explicit `--output_csv` or rename after the fact. The existing files under `results/generated/` and `results/evaluation/` follow the **`<variant>_<size-or-init>`** convention:
 
-`src/generate.py`'s default output path keys on `--hmm_variant` only, so two
-`hmm2` checkpoints of different hidden sizes (e.g., H=64 vs H=256) will clobber
-each other. When running side-by-side, either pass an explicit output filename
-with `--output_csv`/`--scored_csv` or rename after the fact. The existing
-`comparison_hmm2_64_a1.0_*.csv` and `comparison_hmm2_256_a1.0_*.csv` use the
-`hmm2_<H>` convention adopted throughout this repo.
+- `hmm2_64`, `hmm2_256` — keyed on hidden size.
+- `chmm_uniform6`, `chmm_uniform8`, `chmm_quadratic_log` — keyed on the init label from the checkpoint directory name (the substring between `large_` and `_bttf`).
+
+[scripts/gen_all.sh](../scripts/gen_all.sh) does the rename dance automatically.
 
 ## Resumability
 
@@ -137,7 +139,7 @@ Tables 1, 5, and 8 are resumable:
 
 ## Caching
 
-- **Detoxify scores**: cached under `.score_cache/` by SHA1 of text
+- **Detoxify scores**: cached under `.score_cache/` by SHA1 of continuation text
 - **Judge scores**: cached under `.judge_cache/` by SHA1 of (prompt + continuations)
 - Cache files are JSON, two-level directory structure (`{sha1[:2]}/{sha1}.json`)
 
