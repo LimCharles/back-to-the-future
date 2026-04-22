@@ -24,9 +24,10 @@ rendering. It is denser and more prescriptive than [README.md](README.md).
 | `chmm` | **not implemented** | — | — |
 
 `--hmm_variant chmm` raises `NotImplementedError` in [src/generate.py:126-131](src/generate.py#L126-L131).
-Any [models/chmm_gpt2-large_bttf/](models/chmm_gpt2-large_bttf/) directory and any
-`*_chmm_*.csv` artifacts under `results/` are pre-SOHMM-refactor detritus and
-should be ignored until `src/chmm.py` + `utils.load_chmm_model` are added.
+The three [models/chmm_gpt-2-large_*_bttf/](models/) directories (`uniform6`,
+`uniform8`, `quadratic_log`) and any `*_chmm_*.csv` artifacts under `results/`
+are pre-SOHMM-refactor detritus and should be ignored until `src/chmm.py` +
+`utils.load_chmm_model` are added.
 
 [tutorial.ipynb](tutorial.ipynb) is upstream pedagogical material, not the
 authoritative source for fork-specific evaluation defaults.
@@ -161,13 +162,18 @@ nontoxicity-notf, nonpoliticalness, role, neural baseline).
 - [environment.yml](environment.yml) / [environment_cpu.yml](environment_cpu.yml) — conda envs (GPU / CPU).
 - [pyproject.toml](pyproject.toml) — project metadata.
 - [uv.lock](uv.lock) — locked dep graph.
-- [fit.sh](fit.sh) — SLURM batch for classifier fitting (H100 partition).
-- [score.sh](score.sh) — SLURM batch for scoring the three comparison variants.
+- [main.ipynb](main.ipynb) — empty placeholder.
+- [tutorial.ipynb](tutorial.ipynb) — upstream tutorial.
+
+### Scripts ([scripts/](scripts/))
+- [scripts/fit.sh](scripts/fit.sh) — SLURM batch for classifier fitting (H100 partition).
+- [scripts/score.sh](scripts/score.sh) — SLURM batch for scoring a single variant.
   **The `chmm` line in this file currently invokes a scored CSV that targets
   the unimplemented variant — remove or replace with an hmm2-size-specific
   entry before running.**
-- [main.ipynb](main.ipynb) — empty placeholder.
-- [tutorial.ipynb](tutorial.ipynb) — upstream tutorial.
+- [scripts/gen_all.sh](scripts/gen_all.sh) — end-to-end generation sweep over `hmm1`, `hmm2_64`, `hmm2_256` on `RTP_test`, with per-variant EAP dump under `results/figures/`.
+- [scripts/score_all.sh](scripts/score_all.sh) — scoring sweep over the three comparison variants (`hmm1`, `hmm2_64`, `hmm2_256`) at `a=1.0`.
+- [scripts/analyze.sh](scripts/analyze.sh) — aggregation + plotting driver: Table 1 + Table 6 and the fluency-toxicity / capacity / transformation-distribution plots.
 
 ### Data inputs ([data/](data/))
 - [data/prompts.jsonl](data/prompts.jsonl) — 12-prompt demo set.
@@ -176,14 +182,24 @@ nontoxicity-notf, nonpoliticalness, role, neural baseline).
 - [data/RTP_train.jsonl](data/RTP_train.jsonl) — RealToxicityPrompts train split (100k).
 - [data/RTP_test.jsonl](data/RTP_test.jsonl) — RealToxicityPrompts test split (10k); also used by the optional `--val_data` path of the capacity plot.
 - [data/misra_news.json](data/misra_news.json) — Misra News Category dataset (for nonpoliticalness).
-- [data/rolebench/](data/rolebench/) — RoleBench JSONL splits.
+- [data/rolebench/](data/rolebench/) — RoleBench JSONL splits: `train.jsonl`, `test.jsonl`.
 
 ### Models ([models/](models/))
+Each model dir holds `config.json` + weights (`model.safetensors` for
+hmm1/hmm2, `model.pt` for chmm); upstream-derived checkpoints also ship
+`README.md`.
+
 - [models/hmm_gpt2-large_bttf/](models/hmm_gpt2-large_bttf/) — `hmm1`, H=4096 (our group's fork-specific retrain).
-- [models/hmm_gpt2-large_uncon_seq-len-32_4096_10M/](models/hmm_gpt2-large_uncon_seq-len-32_4096_10M/) — `hmm1`, H=4096 (upstream paper checkpoint).
-- [models/hmm2_gpt2-large_64_bttf/](models/hmm2_gpt2-large_64_bttf/) — `hmm2`, H=64.
-- [models/hmm2_gpt2-large_256_bttf/](models/hmm2_gpt2-large_256_bttf/) — `hmm2`, H=256.
-- [models/chmm_gpt2-large_bttf/](models/chmm_gpt2-large_bttf/) — **orphaned**. No `src/chmm.py`; `generate.py` raises. Keep the dir or delete it, but do not route evaluations through it.
+- [models/hmm_gpt2-large_uncon_seq-len-32_4096_10M/](models/hmm_gpt2-large_uncon_seq-len-32_4096_10M/) — `hmm1`, H=4096 (upstream paper checkpoint; ships with `README.md`, `.gitattributes`, and a HuggingFace `.cache/`).
+- [models/hmm2_gpt2-large_64_bttf/](models/hmm2_gpt2-large_64_bttf/) — `hmm2`, H=64 (includes `README.md`).
+- [models/hmm2_gpt2-large_256_bttf/](models/hmm2_gpt2-large_256_bttf/) — `hmm2`, H=256 (includes `README.md`).
+- [models/chmm_gpt-2-large_uniform6_bttf/](models/chmm_gpt-2-large_uniform6_bttf/) — **orphaned** CHMM checkpoint (uniform-6 init).
+- [models/chmm_gpt-2-large_uniform8_bttf/](models/chmm_gpt-2-large_uniform8_bttf/) — **orphaned** CHMM checkpoint (uniform-8 init).
+- [models/chmm_gpt-2-large_quadratic_log_bttf/](models/chmm_gpt-2-large_quadratic_log_bttf/) — **orphaned** CHMM checkpoint (quadratic-log init).
+
+The three CHMM dirs exist on disk but have no loader: `src/chmm.py` is
+missing and `generate.py` raises `NotImplementedError`. Keep or delete, but
+do not route evaluations through them.
 
 ### Classifiers ([classifiers/](classifiers/))
 - [classifiers/coefficients_nontoxicity.csv](classifiers/coefficients_nontoxicity.csv) — standard Lasso nontoxicity (b=10, c=3).
@@ -191,7 +207,7 @@ nontoxicity-notf, nonpoliticalness, role, neural baseline).
 - [classifiers/coefficients_nonpoliticalness.csv](classifiers/coefficients_nonpoliticalness.csv) — Lasso nonpoliticalness for Table 5.
 - [classifiers/neural_classifier_toxicity.pt](classifiers/neural_classifier_toxicity.pt) + [classifiers/neural_classifier_toxicity_metrics.json](classifiers/neural_classifier_toxicity_metrics.json) — DistilBERT baseline for Table 6.
 - [classifiers/misra_news_political_scores.json](classifiers/misra_news_political_scores.json) — zero-shot scores for Misra News; input to `fit_nonpoliticalness`.
-- [classifiers/role/](classifiers/role/) — per-character RoleBench classifiers.
+- [classifiers/role/](classifiers/role/) — per-character RoleBench classifiers: 69 per-character coefficient CSVs (e.g. `sherlock_holmes.csv`, `james_bond.csv`, `michael_scott.csv`, …) plus [classifiers/role/manifest.json](classifiers/role/manifest.json) as an index.
 
 ### Results ([results/](results/) — gitignored)
 - [results/generated/](results/generated/) — `_generated.csv` from `src/generate.py`.
@@ -221,12 +237,14 @@ nontoxicity-notf, nonpoliticalness, role, neural baseline).
 - [evaluations/judge.py](evaluations/judge.py) — local LM-as-judge inference/caching (Table 8).
 
 ### Classifier fit scripts ([evaluations/classifiers/](evaluations/classifiers/))
+- [evaluations/classifiers/__init__.py](evaluations/classifiers/__init__.py) — package marker.
 - [evaluations/classifiers/fit_nontoxicity.py](evaluations/classifiers/fit_nontoxicity.py) — standard nontoxicity via `src/fit.py`.
 - [evaluations/classifiers/fit_nonpoliticalness.py](evaluations/classifiers/fit_nonpoliticalness.py) — nonpoliticalness (composition).
 - [evaluations/classifiers/fit_role.py](evaluations/classifiers/fit_role.py) — per-character RoleBench.
 - [evaluations/classifiers/fit_neural_baseline.py](evaluations/classifiers/fit_neural_baseline.py) — DistilBERT (Table 6).
 
 ### Tables ([evaluations/tables/](evaluations/tables/) → `results/tables/`)
+- [evaluations/tables/__init__.py](evaluations/tables/__init__.py) — package marker.
 - [evaluations/tables/table1_detoxification.py](evaluations/tables/table1_detoxification.py) — full RTP sweep; resumable via scored-CSV check.
 - [evaluations/tables/table2_transformation_ablation.py](evaluations/tables/table2_transformation_ablation.py) — train/decode transform ablation. **hmm1 only** (SOHMM kernel has no no-transform path).
 - [evaluations/tables/table3_roles.py](evaluations/tables/table3_roles.py) — qualitative role-play side-by-side.
@@ -237,6 +255,7 @@ nontoxicity-notf, nonpoliticalness, role, neural baseline).
 - [evaluations/tables/table8_lm_judge.py](evaluations/tables/table8_lm_judge.py) — Llama-3.3-70B-Instruct judge, resumable.
 
 ### Plots ([evaluations/plots/](evaluations/plots/) → `results/figures/`)
+- [evaluations/plots/__init__.py](evaluations/plots/__init__.py) — package marker.
 - [evaluations/plots/plot_fluency_toxicity_tradeoff.py](evaluations/plots/plot_fluency_toxicity_tradeoff.py) — Figure 3; consumes `results/tables/table1_detoxification.json`.
 - [evaluations/plots/plot_hmm_quality_vs_toxicity.py](evaluations/plots/plot_hmm_quality_vs_toxicity.py) — **repurposed** from training-step sweep to capacity sweep. Plots `H` (log-scale) vs `avg_max_tox` (TRACE-mode) for a user-supplied set of `variant:path` tuples; optional val-LL twin-axis.
 - [evaluations/plots/plot_transformation_distributions.py](evaluations/plots/plot_transformation_distributions.py) — score/EAP histograms. Accepts `--eap_dumps` from either hmm1 or hmm2 (same `.npz` contract).
