@@ -20,8 +20,10 @@ sys.path.append(PROJECT_ROOT)
 from src import utils
 from src.hmm import HMM
 from src.sohmm import SOHMM
+from src.chmm import CHMM
 from src.logits_processor import HmmGuidedLogitsProcessor
 from src.logits_processor_sohmm import SOHmmGuidedLogitsProcessor
+from src.logits_processor_chmm import CHMMGuidedLogitsProcessor
 
 def set_seed(seed: int, n_gpu: int):
     """Set random seed for reproducibility across PyTorch and CUDA."""
@@ -44,11 +46,11 @@ def main():
     parser.add_argument("--prompt_batch_size", type=int, default=1, help="Prompts processed together")
     parser.add_argument("--hmm_variant", type=str, default="hmm1",
                         choices=["hmm1", "hmm2", "chmm"],
-                        help="HMM variant: hmm1=first-order HMM, hmm2=second-order HMM (SOHMM/SHMM), chmm=not yet implemented")
+                        help="HMM variant: hmm1=first-order HMM, hmm2=second-order HMM (SOHMM/SHMM), chmm=clone-hidden HMM")
     parser.add_argument("--no_decode_transform", action="store_true",
                         help="Skip sigmoid-logit reshaping of EAP at decode time (hmm1 only)")
     parser.add_argument("--dump_eap_path", type=str, default=None,
-                        help="Path to dump first-step per-token EAP as .npz (hmm1 only)")
+                        help="Path to dump first-step per-token EAP as .npz (hmm1/hmm2/chmm)")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--device", type=str, default=None)
 
@@ -77,7 +79,7 @@ def main():
     set_seed(args.seed, torch.cuda.device_count())
 
     # Load generation model and tokenizer
-    print(f"Loading generation model '{args.model_path}' \u2026")
+    print(f"Loading generation model '{args.model_path}' …")
     gen_model = AutoModelForCausalLM.from_pretrained(args.model_path).to(device).eval()
     gen_tokenizer = AutoTokenizer.from_pretrained(args.model_path, padding_side="left")
     gen_tokenizer.pad_token = gen_tokenizer.pad_token or gen_tokenizer.eos_token
@@ -92,7 +94,7 @@ def main():
             sys.exit(f"Missing weights file: {args.weights_path}")
 
         if args.hmm_variant == "hmm1":
-            print(f"Loading first-order HMM from '{args.hmm_model_path}' \u2026")
+            print(f"Loading first-order HMM from '{args.hmm_model_path}' …")
             hmm_model: HMM = utils.load_hmm_model(args.hmm_model_path, device=device)
             weights_tensor = utils.load_weights(args.weights_path, device=device)
             hmm_model.set_weights(weights_tensor)
@@ -106,7 +108,7 @@ def main():
                 dump_eap_path=args.dump_eap_path,
             )
         elif args.hmm_variant == "hmm2":
-            print(f"Loading second-order HMM (SOHMM) from '{args.hmm_model_path}' \u2026")
+            print(f"Loading second-order HMM (SOHMM) from '{args.hmm_model_path}' …")
             sohmm_model: SOHMM = utils.load_sohmm_model(args.hmm_model_path, device=device)
             weights_tensor = utils.load_weights(args.weights_path, device=device)
             sohmm_model.set_weights(weights_tensor)
@@ -124,12 +126,27 @@ def main():
                 tokenizer=gen_tokenizer,
                 dump_eap_path=args.dump_eap_path,
             )
-        else:  # chmm
-            raise NotImplementedError(
-                f"--hmm_variant {args.hmm_variant!r} is not supported: "
-                "no CHMM class exists in the upstream sohmm branch to mirror. "
-                "Add src/chmm.py and utils.load_chmm_model before using this variant."
+        elif args.hmm_variant == "chmm":
+            print(f"Loading clone-hidden HMM (CHMM) from '{args.hmm_model_path}' …")
+            chmm_model: CHMM = utils.load_chmm_model(args.hmm_model_path, device=device)
+            weights_tensor = utils.load_weights(args.weights_path, device=device)
+            chmm_model.set_weights(weights_tensor)
+            expectation_cache = chmm_model.compute_backward_expectation(T=args.max_len)
+            if args.no_decode_transform:
+                print(
+                    "Warning: --no_decode_transform is not supported for --hmm_variant chmm "
+                    "and will be ignored (CHMM kernel has no no-transform path).",
+                    file=sys.stderr,
+                )
+            hmm_processor = CHMMGuidedLogitsProcessor(
+                hmm_model=chmm_model,
+                expectation_cache=expectation_cache,
+                a=args.a,
+                tokenizer=gen_tokenizer,
+                dump_eap_path=args.dump_eap_path,
             )
+        else:
+            raise ValueError(f"Unknown hmm_variant: {args.hmm_variant!r}")
     else:
         print("Running in baseline mode (no HMM guidance)")
 
@@ -293,9 +310,9 @@ def main():
             index=False,
         )
         file_exists = True
-        print(f"Saved {len(batch_rows)} rows \u2192 {output_path}")
+        print(f"Saved {len(batch_rows)} rows → {output_path}")
 
-    print("Generation complete \u2714 \u2013 results in", output_path)
+    print("Generation complete ✔ – results in", output_path)
 
 
 if __name__ == "__main__":

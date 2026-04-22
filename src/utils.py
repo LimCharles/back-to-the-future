@@ -1,6 +1,7 @@
 import torch
 from .hmm import HMM
 from .sohmm import SOHMM
+from .chmm import CHMM
 import pandas as pd
 from typing import Tuple
 
@@ -42,6 +43,27 @@ def load_sohmm_model(sohmm_model_path: str, device: str = 'cuda:0') -> SOHMM:
     sohmm_model = SOHMM.from_pretrained(sohmm_model_path, local_files_only=True).to(device)
     sohmm_model.eval()
     return sohmm_model
+
+
+def load_chmm_model(chmm_model_path: str, device: str = 'cuda:0') -> CHMM:
+    """
+    Load the pretrained clone-hidden HMM (CHMM) model.
+
+    Uses ``CHMM.from_pretrained`` (reference-format ``model.pt`` payload with
+    ``config``, ``gamma``, ``pair_codes``, ``transition_values``,
+    ``transition_floor``). Falls back to dense ``alpha_exp`` payloads via
+    the reference's ``_pair_codes_from_dense`` path.
+
+    Args:
+        chmm_model_path (str): Path to the saved CHMM directory.
+        device (str): Device to load the model on.
+
+    Returns:
+        CHMM: Loaded CHMM model in eval mode.
+    """
+    chmm_model = CHMM.from_pretrained(chmm_model_path, map_location=device)
+    chmm_model.eval()
+    return chmm_model
 
 
 def load_weights(weights_file: str, device: str = "cpu") -> torch.Tensor:

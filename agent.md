@@ -21,13 +21,9 @@ rendering. It is denser and more prescriptive than [README.md](README.md).
 |---|---|---|---|
 | `hmm1` | first-order HMM | [src/hmm.py](src/hmm.py) (`HMM`) | [src/logits_processor.py](src/logits_processor.py) (`HmmGuidedLogitsProcessor`) |
 | `hmm2` | second-order HMM / SOHMM / SHMM | [src/sohmm.py](src/sohmm.py) (`SOHMM`) | [src/logits_processor_sohmm.py](src/logits_processor_sohmm.py) (`SOHmmGuidedLogitsProcessor`) |
-| `chmm` | **not implemented** | — | — |
+| `chmm` | clone-hidden HMM (sparse, vocab-keyed states) | [src/chmm.py](src/chmm.py) (`CHMM`) | [src/logits_processor_chmm.py](src/logits_processor_chmm.py) (`CHMMGuidedLogitsProcessor`) |
 
-`--hmm_variant chmm` raises `NotImplementedError` in [src/generate.py:126-131](src/generate.py#L126-L131).
-The three [models/chmm_gpt-2-large_*_bttf/](models/) directories (`uniform6`,
-`uniform8`, `quadratic_log`) and any `*_chmm_*.csv` artifacts under `results/`
-are pre-SOHMM-refactor detritus and should be ignored until `src/chmm.py` +
-`utils.load_chmm_model` are added.
+All three variants dispatch through `src/generate.py:94-148`.
 
 [tutorial.ipynb](tutorial.ipynb) is upstream pedagogical material, not the
 authoritative source for fork-specific evaluation defaults.
@@ -47,13 +43,22 @@ output directory — do not cross-pollute.
 | Plot | `evaluations/plots/plot*.py` | `results/figures/*.png` + companion `*.json` **next to the PNG** |
 
 **Generate filename convention.** `src/generate.py` uses `--hmm_variant` as the
-only tag. Two `hmm2` checkpoints of different sizes will clobber each other
-unless the caller renames the output or passes a distinct `--hmm_model_path`
-with a wrapper script that renames after. Existing files in
-[results/generated/](results/generated/) and [results/evaluation/](results/evaluation/) follow the **`hmm2_<H>`** convention (e.g.
-`comparison_hmm2_64_a1.0_*.csv`, `comparison_hmm2_256_a1.0_*.csv`) — produced by manual
-renaming after each run. Keep using this convention; the capacity plot
-([evaluations/plots/plot_hmm_quality_vs_toxicity.py](evaluations/plots/plot_hmm_quality_vs_toxicity.py)) depends on it.
+only tag. Multiple checkpoints of the same variant (e.g. two `hmm2` sizes, three
+`chmm` init variants) will clobber each other unless the caller renames the
+output or passes a distinct `--hmm_model_path` with a wrapper script that
+renames after. Existing files in
+[results/generated/](results/generated/) and [results/evaluation/](results/evaluation/)
+follow the **`<variant>_<size-or-init>`** convention:
+
+- `hmm2_<H>`: `comparison_hmm2_64_a1.0_*.csv`, `comparison_hmm2_256_a1.0_*.csv`
+- `chmm_<init>`: `comparison_chmm_uniform6_a1.0_*.csv`,
+  `comparison_chmm_uniform8_a1.0_*.csv`,
+  `comparison_chmm_quadratic_log_a1.0_*.csv`
+
+ produced by manual renaming after each run (see [scripts/gen_all.sh](scripts/gen_all.sh)).
+The capacity plot
+([evaluations/plots/plot_hmm_quality_vs_toxicity.py](evaluations/plots/plot_hmm_quality_vs_toxicity.py))
+depends on this convention.
 
 **Plot companion JSON.** Every plot writes its source-of-truth data JSON next
 to its PNG under `results/figures/`. Do not write plot companion JSONs
@@ -83,7 +88,7 @@ nontoxicity-notf, nonpoliticalness, role, neural baseline).
 
 ### Pipeline B — Generate → Score
 
-1. `src/generate.py` loads LM + HMM(/SOHMM) + weights, dispatches on
+1. `src/generate.py` loads LM + HMM(/SOHMM/CHMM) + weights, dispatches on
    `--hmm_variant`, writes `results/generated/*_generated.csv`.
 2. `src/score.py` consumes the generated CSV and augments rows with
    `max_toxicity`, `any_toxicity_gt_0.5`, `mean_fluency`, `dist-1/2/3`
@@ -91,13 +96,13 @@ nontoxicity-notf, nonpoliticalness, role, neural baseline).
 3. Scored CSV lands in `results/evaluation/` (auto-inferred from input
    filename if `--output_csv` is omitted).
 
-**Variant dispatch lives in [src/generate.py:94-131](src/generate.py#L94-L131):**
+**Variant dispatch lives in [src/generate.py:94-148](src/generate.py#L94-L148):**
 
 | Variant | Loader | Processor | `--no_decode_transform` | `--dump_eap_path` |
 |---|---|---|---|---|
 | `hmm1` | `utils.load_hmm_model` | `HmmGuidedLogitsProcessor` | honored | honored |
 | `hmm2` | `utils.load_sohmm_model` | `SOHmmGuidedLogitsProcessor` | warning + ignored | honored |
-| `chmm` | — | — | `NotImplementedError` | — |
+| `chmm` | `utils.load_chmm_model` | `CHMMGuidedLogitsProcessor` | warning + ignored | honored |
 
 ### Pipeline C — Tables and plots
 
@@ -127,6 +132,19 @@ nontoxicity-notf, nonpoliticalness, role, neural baseline).
   log-α `(B, H, H)`; `compute_backward_expectation` returns
   `(T, H, H)` indexed by `(z_{t-1}, z_t)`. `loglikelihood(input_ids, batch_size)`
   is available.
+- [src/chmm.py](src/chmm.py) — clone-hidden HMM. Vocabulary-keyed states:
+  `clones_per_token (V,)`, `state_offsets (V+1,)`, `clone_to_token (H,)`.
+  Sparse block-structured transitions via `SparseTransitionTable`
+  (`pair_codes`, `transition_values`, `transition_floor`); `gamma (H,)` in
+  log-space. Checkpoint format is a single `model.pt` dict with keys
+  `config`, `gamma`, `pair_codes`, `transition_values`, `transition_floor`
+  plus a `config.json` sibling; `from_pretrained` also accepts legacy
+  dense-`alpha_exp` payloads via `_pair_codes_from_dense`. Two TRACE hooks
+  match the hmm1/hmm2 interface: `set_weights(weights_tensor)` registers
+  `weights_tensor` / `exp_weights` / `clone_exp_weights` buffers, and
+  `compute_backward_expectation(T)` returns `(T, H)` consumed by the decode
+  processor. `loglikelihood(input_ids, batch_size)` runs through the
+  fully-observed compact forward path.
 - [src/logits_processor.py](src/logits_processor.py) — TRACE decode kernel
   for `hmm1`: `logit_adjustment` (with sigmoid-logit reshape) and
   `logit_adjustment_no_transform` (ablation path for Table 2).
@@ -135,12 +153,18 @@ nontoxicity-notf, nonpoliticalness, role, neural baseline).
 - [src/logits_processor_sohmm.py](src/logits_processor_sohmm.py) — TRACE
   decode kernel for `hmm2`: `logit_adjustment_so` carries
   `log_alpha_prev (B,H,H)` and a scalar `product_generated_toxicity (B,)`
-  across steps. `_compute_eap_for_dump_so` mirrors the hmm1 dump contract
-  (same `.npz` keys `eap_pre_transform`/`eap_post_transform`), so the same
-  downstream plot consumes both.
+  across steps. `_compute_eap_for_dump_so` mirrors the hmm1 dump contract.
+- [src/logits_processor_chmm.py](src/logits_processor_chmm.py) — TRACE
+  decode kernel for `chmm`. Signature mirrors sohmm's:
+  `(hmm_model, expectation_cache, a, tokenizer, epsilon, dump_eap_path)`.
+  Keeps a `(B, H)` forward-α state through `_observe_tokens` /
+  `_predict_next_state` (sparse block scatter-adds over
+  `outgoing_groups_by_token`). `_compute_eap_for_dump_chmm` emits the same
+  `.npz` keys (`eap_pre_transform`, `eap_post_transform`) as hmm1/hmm2 so
+  `plot_transformation_distributions.py` consumes all three uniformly.
 - [src/utils.py](src/utils.py) — shared loaders: `load_hmm_model`,
-  `load_sohmm_model`, `load_weights`. The weights CSV loader enforces
-  sequential `Token ID` starting at 0.
+  `load_sohmm_model`, `load_chmm_model`, `load_weights`. The weights CSV
+  loader enforces sequential `Token ID` starting at 0.
 - `--a` is the decode-time guidance-strength knob. `a=0` is no guidance,
   `a=1` is the paper default, `a>1` is aggressive.
 - Generation CSV schema: JSON-per-cell under `trace_gen_{k}` and/or
@@ -167,13 +191,10 @@ nontoxicity-notf, nonpoliticalness, role, neural baseline).
 
 ### Scripts ([scripts/](scripts/))
 - [scripts/fit.sh](scripts/fit.sh) — SLURM batch for classifier fitting (H100 partition).
-- [scripts/score.sh](scripts/score.sh) — SLURM batch for scoring a single variant.
-  **The `chmm` line in this file currently invokes a scored CSV that targets
-  the unimplemented variant — remove or replace with an hmm2-size-specific
-  entry before running.**
-- [scripts/gen_all.sh](scripts/gen_all.sh) — end-to-end generation sweep over `hmm1`, `hmm2_64`, `hmm2_256` on `RTP_test`, with per-variant EAP dump under `results/figures/`.
-- [scripts/score_all.sh](scripts/score_all.sh) — scoring sweep over the three comparison variants (`hmm1`, `hmm2_64`, `hmm2_256`) at `a=1.0`.
-- [scripts/analyze.sh](scripts/analyze.sh) — aggregation + plotting driver: Table 1 + Table 6 and the fluency-toxicity / capacity / transformation-distribution plots.
+- [scripts/score.sh](scripts/score.sh) — SLURM batch for scoring single variants (hmm1, hmm2_64, hmm2_256, chmm_uniform6/8/quadratic_log) with `--toxicity_only`.
+- [scripts/gen_all.sh](scripts/gen_all.sh) — end-to-end generation sweep over `hmm1`, `hmm2_64`, `hmm2_256`, `chmm_uniform6`, `chmm_uniform8`, `chmm_quadratic_log` on `RTP_test`, with per-variant EAP dump under `results/figures/`.
+- [scripts/score_all.sh](scripts/score_all.sh) — scoring sweep over the six comparison variants at `a=1.0`.
+- [scripts/analyze.sh](scripts/analyze.sh) — aggregation + plotting driver: Table 1 + Table 6 and the fluency-toxicity / capacity / transformation-distribution plots across all six variants.
 
 ### Data inputs ([data/](data/))
 - [data/prompts.jsonl](data/prompts.jsonl) — 12-prompt demo set.
@@ -186,20 +207,15 @@ nontoxicity-notf, nonpoliticalness, role, neural baseline).
 
 ### Models ([models/](models/))
 Each model dir holds `config.json` + weights (`model.safetensors` for
-hmm1/hmm2, `model.pt` for chmm); upstream-derived checkpoints also ship
-`README.md`.
+hmm1/hmm2, `model.pt` for chmm).
 
 - [models/hmm_gpt2-large_bttf/](models/hmm_gpt2-large_bttf/) — `hmm1`, H=4096 (our group's fork-specific retrain).
 - [models/hmm_gpt2-large_uncon_seq-len-32_4096_10M/](models/hmm_gpt2-large_uncon_seq-len-32_4096_10M/) — `hmm1`, H=4096 (upstream paper checkpoint; ships with `README.md`, `.gitattributes`, and a HuggingFace `.cache/`).
 - [models/hmm2_gpt2-large_64_bttf/](models/hmm2_gpt2-large_64_bttf/) — `hmm2`, H=64 (includes `README.md`).
 - [models/hmm2_gpt2-large_256_bttf/](models/hmm2_gpt2-large_256_bttf/) — `hmm2`, H=256 (includes `README.md`).
-- [models/chmm_gpt-2-large_uniform6_bttf/](models/chmm_gpt-2-large_uniform6_bttf/) — **orphaned** CHMM checkpoint (uniform-6 init).
-- [models/chmm_gpt-2-large_uniform8_bttf/](models/chmm_gpt-2-large_uniform8_bttf/) — **orphaned** CHMM checkpoint (uniform-8 init).
-- [models/chmm_gpt-2-large_quadratic_log_bttf/](models/chmm_gpt-2-large_quadratic_log_bttf/) — **orphaned** CHMM checkpoint (quadratic-log init).
-
-The three CHMM dirs exist on disk but have no loader: `src/chmm.py` is
-missing and `generate.py` raises `NotImplementedError`. Keep or delete, but
-do not route evaluations through them.
+- [models/chmm_gpt-2-large_uniform6_bttf/](models/chmm_gpt-2-large_uniform6_bttf/) — `chmm`, uniform-6 init (reference-format checkpoint).
+- [models/chmm_gpt-2-large_uniform8_bttf/](models/chmm_gpt-2-large_uniform8_bttf/) — `chmm`, uniform-8 init.
+- [models/chmm_gpt-2-large_quadratic_log_bttf/](models/chmm_gpt-2-large_quadratic_log_bttf/) — `chmm`, quadratic-log init.
 
 ### Classifiers ([classifiers/](classifiers/))
 - [classifiers/coefficients_nontoxicity.csv](classifiers/coefficients_nontoxicity.csv) — standard Lasso nontoxicity (b=10, c=3).
@@ -207,7 +223,7 @@ do not route evaluations through them.
 - [classifiers/coefficients_nonpoliticalness.csv](classifiers/coefficients_nonpoliticalness.csv) — Lasso nonpoliticalness for Table 5.
 - [classifiers/neural_classifier_toxicity.pt](classifiers/neural_classifier_toxicity.pt) + [classifiers/neural_classifier_toxicity_metrics.json](classifiers/neural_classifier_toxicity_metrics.json) — DistilBERT baseline for Table 6.
 - [classifiers/misra_news_political_scores.json](classifiers/misra_news_political_scores.json) — zero-shot scores for Misra News; input to `fit_nonpoliticalness`.
-- [classifiers/role/](classifiers/role/) — per-character RoleBench classifiers: 69 per-character coefficient CSVs (e.g. `sherlock_holmes.csv`, `james_bond.csv`, `michael_scott.csv`, …) plus [classifiers/role/manifest.json](classifiers/role/manifest.json) as an index.
+- [classifiers/role/](classifiers/role/) — per-character RoleBench classifiers: 69 per-character coefficient CSVs plus [classifiers/role/manifest.json](classifiers/role/manifest.json) as an index.
 
 ### Results ([results/](results/) — gitignored)
 - [results/generated/](results/generated/) — `_generated.csv` from `src/generate.py`.
@@ -218,12 +234,14 @@ do not route evaluations through them.
 ### Core source ([src/](src/))
 - [src/hmm.py](src/hmm.py) — first-order `HMM`; `stable_mvm`; forward α and backward E.
 - [src/sohmm.py](src/sohmm.py) — second-order `SOHMM`; pair-state forward/backward; loglikelihood.
+- [src/chmm.py](src/chmm.py) — clone-hidden `CHMM` with `SparseTransitionTable`; `set_weights`; `compute_backward_expectation`; `loglikelihood`.
 - [src/logits_processor.py](src/logits_processor.py) — `HmmGuidedLogitsProcessor`; compiled kernels; first-step EAP dump.
-- [src/logits_processor_sohmm.py](src/logits_processor_sohmm.py) — `SOHmmGuidedLogitsProcessor`; compiled kernel; first-step EAP dump (same npz contract as hmm1).
-- [src/utils.py](src/utils.py) — shared loaders for HMM/SOHMM/weights.
+- [src/logits_processor_sohmm.py](src/logits_processor_sohmm.py) — `SOHmmGuidedLogitsProcessor`; compiled kernel; first-step EAP dump.
+- [src/logits_processor_chmm.py](src/logits_processor_chmm.py) — `CHMMGuidedLogitsProcessor`; sparse block scatter-adds; first-step EAP dump (same `.npz` contract as hmm1/hmm2).
+- [src/utils.py](src/utils.py) — shared loaders for HMM/SOHMM/CHMM/weights.
 - [src/fit.py](src/fit.py) — Lasso coefficient fit (+ diagnostics plot).
 - [src/score_attribute.py](src/score_attribute.py) — zero-shot attribute labeling for custom JSONL prep.
-- [src/generate.py](src/generate.py) — generation entrypoint; variant dispatch at lines 94-131.
+- [src/generate.py](src/generate.py) — generation entrypoint; variant dispatch at lines 94-148.
 - [src/score.py](src/score.py) — scoring entrypoint (Detoxify + PPL + dist-n).
 - [src/score_original.py](src/score_original.py) — **legacy**; retained for upstream comparison only.
 
@@ -246,8 +264,8 @@ do not route evaluations through them.
 ### Tables ([evaluations/tables/](evaluations/tables/) → `results/tables/`)
 - [evaluations/tables/__init__.py](evaluations/tables/__init__.py) — package marker.
 - [evaluations/tables/table1_detoxification.py](evaluations/tables/table1_detoxification.py) — full RTP sweep; resumable via scored-CSV check.
-- [evaluations/tables/table2_transformation_ablation.py](evaluations/tables/table2_transformation_ablation.py) — train/decode transform ablation. **hmm1 only** (SOHMM kernel has no no-transform path).
-- [evaluations/tables/table3_roles.py](evaluations/tables/table3_roles.py) — qualitative role-play side-by-side.
+- [evaluations/tables/table2_transformation_ablation.py](evaluations/tables/table2_transformation_ablation.py) — train/decode transform ablation. **hmm1 only** (SOHMM/CHMM kernels have no no-transform path).
+- [evaluations/tables/table3_roles.py](evaluations/tables/table3_roles.py) — qualitative role-play side-by-side (accepts chmm via `--hmm_dirs chmm=...`).
 - [evaluations/tables/table4_timing.py](evaluations/tables/table4_timing.py) — fit + per-token inference timing.
 - [evaluations/tables/table5_composition.py](evaluations/tables/table5_composition.py) — nontoxicity × nonpoliticalness composition.
 - [evaluations/tables/table6_factorizability.py](evaluations/tables/table6_factorizability.py) — Lasso vs neural CE (no HMM needed).
@@ -257,15 +275,15 @@ do not route evaluations through them.
 ### Plots ([evaluations/plots/](evaluations/plots/) → `results/figures/`)
 - [evaluations/plots/__init__.py](evaluations/plots/__init__.py) — package marker.
 - [evaluations/plots/plot_fluency_toxicity_tradeoff.py](evaluations/plots/plot_fluency_toxicity_tradeoff.py) — Figure 3; consumes `results/tables/table1_detoxification.json`.
-- [evaluations/plots/plot_hmm_quality_vs_toxicity.py](evaluations/plots/plot_hmm_quality_vs_toxicity.py) — **repurposed** from training-step sweep to capacity sweep. Plots `H` (log-scale) vs `avg_max_tox` (TRACE-mode) for a user-supplied set of `variant:path` tuples; optional val-LL twin-axis.
-- [evaluations/plots/plot_transformation_distributions.py](evaluations/plots/plot_transformation_distributions.py) — score/EAP histograms. Accepts `--eap_dumps` from either hmm1 or hmm2 (same `.npz` contract).
+- [evaluations/plots/plot_hmm_quality_vs_toxicity.py](evaluations/plots/plot_hmm_quality_vs_toxicity.py) — capacity sweep across all three variants. Plots `H` (log-scale) vs `avg_max_tox` (TRACE-mode) for a user-supplied set of `variant:path` tuples; optional val-LL twin-axis.
+- [evaluations/plots/plot_transformation_distributions.py](evaluations/plots/plot_transformation_distributions.py) — score/EAP histograms. Accepts `--eap_dumps` from hmm1, hmm2, or chmm (same `.npz` contract).
 - [evaluations/plots/plot_role_quality_scatter.py](evaluations/plots/plot_role_quality_scatter.py) — prompting vs TRACE per RoleBench character.
 
 ---
 
 ## 6) Most important integration edges
 
-- Variant dispatch is centralised in `src/generate.py:94-131`. Any new variant
+- Variant dispatch is centralised in `src/generate.py:94-148`. Any new variant
   means (a) new source files, (b) a new loader in `src/utils.py`, (c) a new
   branch in the dispatch block, (d) updating every `--hmm_variant` argparse
   choices list across `evaluations/`.
@@ -278,10 +296,14 @@ do not route evaluations through them.
 - `table1_detoxification.py` resumability depends on deterministic scored-CSV
   filenames under `results/evaluation/`.
 - Plot companion JSON paths: always `results/figures/` — see Section 2.
-- hmm2 EAP dump contract matches hmm1 (`.npz` keys
+- EAP dump contract matches across all three processors (`.npz` keys
   `eap_pre_transform`/`eap_post_transform`); any change to the dump payload
-  must be applied in both `_compute_eap_for_dump` (hmm1) and
-  `_compute_eap_for_dump_so` (hmm2) simultaneously.
+  must be applied in `_compute_eap_for_dump` (hmm1),
+  `_compute_eap_for_dump_so` (hmm2), and `_compute_eap_for_dump_chmm` (chmm)
+  simultaneously.
+- CHMM capacity: unlike hmm1/hmm2 where H is a single scalar, CHMM's total
+  hidden-state count is `sum(clones_per_token)`. `_read_hidden_size` in the
+  capacity plot detects this and sums the list from `config.json`.
 
 ---
 

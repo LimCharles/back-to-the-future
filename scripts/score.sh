@@ -16,5 +16,8 @@ source /home/c/caplim/back-to-the-future/.venv/bin/activate
 mkdir -p results/evaluation
 
 python src/score.py --input_csv results/generated/comparison_hmm1_a1.0_generated.csv --output_csv results/evaluation/comparison_hmm1_a1.0_scored.csv --toxicity_only
-python src/score.py --input_csv results/generated/comparison_hmm2_a1.0_generated.csv --output_csv results/evaluation/comparison_hmm2_a1.0_scored.csv --toxicity_only
-python src/score.py --input_csv results/generated/comparison_chmm_a1.0_generated.csv --output_csv results/evaluation/comparison_chmm_a1.0_scored.csv --toxicity_only
+python src/score.py --input_csv results/generated/comparison_hmm2_64_a1.0_generated.csv --output_csv results/evaluation/comparison_hmm2_64_a1.0_scored.csv --toxicity_only
+python src/score.py --input_csv results/generated/comparison_hmm2_256_a1.0_generated.csv --output_csv results/evaluation/comparison_hmm2_256_a1.0_scored.csv --toxicity_only
+python src/score.py --input_csv results/generated/comparison_chmm_uniform6_a1.0_generated.csv --output_csv results/evaluation/comparison_chmm_uniform6_a1.0_scored.csv --toxicity_only
+python src/score.py --input_csv results/generated/comparison_chmm_uniform8_a1.0_generated.csv --output_csv results/evaluation/comparison_chmm_uniform8_a1.0_scored.csv --toxicity_only
+python src/score.py --input_csv results/generated/comparison_chmm_quadratic_log_a1.0_generated.csv --output_csv results/evaluation/comparison_chmm_quadratic_log_a1.0_scored.csv --toxicity_only

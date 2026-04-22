@@ -22,7 +22,7 @@ A=1.0
 
 # ------------------------------------------------------------------
 # Table 1: aggregate per-variant (trace + baseline) from scored CSVs.
-# Merges all three variants into one results/tables/table1_detoxification.json
+# Merges all six variants into one results/tables/table1_detoxification.json
 # ------------------------------------------------------------------
 python <<'PY'
 import json, os, sys, statistics
@@ -36,9 +36,12 @@ from evaluations.tables.table1_detoxification import _aggregate_mode
 from evaluations.metrics import parse_scored_csv
 
 TAGS = [
-    ("hmm1",       "hmm1",     ROOT / "results/evaluation/comparison_hmm1_a1.0_scored.csv"),
-    ("hmm2_64",    "hmm2",     ROOT / "results/evaluation/comparison_hmm2_64_a1.0_scored.csv"),
-    ("hmm2_256",   "hmm2",     ROOT / "results/evaluation/comparison_hmm2_256_a1.0_scored.csv"),
+    ("hmm1",                "hmm1",  ROOT / "results/evaluation/comparison_hmm1_a1.0_scored.csv"),
+    ("hmm2_64",             "hmm2",  ROOT / "results/evaluation/comparison_hmm2_64_a1.0_scored.csv"),
+    ("hmm2_256",            "hmm2",  ROOT / "results/evaluation/comparison_hmm2_256_a1.0_scored.csv"),
+    ("chmm_uniform6",       "chmm",  ROOT / "results/evaluation/comparison_chmm_uniform6_a1.0_scored.csv"),
+    ("chmm_uniform8",       "chmm",  ROOT / "results/evaluation/comparison_chmm_uniform8_a1.0_scored.csv"),
+    ("chmm_quadratic_log",  "chmm",  ROOT / "results/evaluation/comparison_chmm_quadratic_log_a1.0_scored.csv"),
 ]
 
 results = []
@@ -96,7 +99,7 @@ python -m evaluations.plots.plot_fluency_toxicity_tradeoff \
 # Plot: capacity-vs-toxicity scatter (reads scored CSVs directly)
 # ------------------------------------------------------------------
 python -m evaluations.plots.plot_hmm_quality_vs_toxicity \
-    --models "hmm1:models/hmm_gpt2-large_bttf,hmm2:models/hmm2_gpt2-large_64_bttf,hmm2:models/hmm2_gpt2-large_256_bttf" \
+    --models "hmm1:models/hmm_gpt2-large_bttf,hmm2:models/hmm2_gpt2-large_64_bttf,hmm2:models/hmm2_gpt2-large_256_bttf,chmm:models/chmm_gpt-2-large_uniform6_bttf,chmm:models/chmm_gpt-2-large_uniform8_bttf,chmm:models/chmm_gpt-2-large_quadratic_log_bttf" \
     --a "$A"
 
 # ------------------------------------------------------------------
@@ -109,7 +112,10 @@ python -m evaluations.plots.plot_transformation_distributions \
         results/figures/eap_hmm1.npz \
         results/figures/eap_hmm2_64.npz \
         results/figures/eap_hmm2_256.npz \
-    --eap_labels hmm1 hmm2_64 hmm2_256
+        results/figures/eap_chmm_uniform6.npz \
+        results/figures/eap_chmm_uniform8.npz \
+        results/figures/eap_chmm_quadratic_log.npz \
+    --eap_labels hmm1 hmm2_64 hmm2_256 chmm_uniform6 chmm_uniform8 chmm_quadratic_log
 
 echo "==== ANALYSIS DONE ===="
 ls -la results/tables/ results/figures/

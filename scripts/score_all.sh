@@ -20,7 +20,7 @@ mkdir -p results/evaluation
 
 A=1.0
 
-for TAG in hmm1 hmm2_64 hmm2_256; do
+for TAG in hmm1 hmm2_64 hmm2_256 chmm_uniform6 chmm_uniform8 chmm_quadratic_log; do
     IN=results/generated/comparison_${TAG}_a${A}_generated.csv
     OUT=results/evaluation/comparison_${TAG}_a${A}_scored.csv
 

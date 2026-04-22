@@ -87,6 +87,72 @@ python src/generate.py \
     --num_generations 1 --max_len 5 \
     --dump_eap_path results/figures/eap_hmm2_256.npz
 
+# ------------------------------------------------------------------
+# chmm (uniform6)
+# ------------------------------------------------------------------
+rm -f results/generated/comparison_chmm_a${A}_generated.csv \
+      results/generated/comparison_chmm_uniform6_a${A}_generated.csv
+python src/generate.py \
+    --hmm_variant chmm \
+    --hmm_model_path models/chmm_gpt-2-large_uniform6_bttf \
+    --prompts_path "$PROMPTS" \
+    --weights_path classifiers/coefficients_nontoxicity.csv \
+    --a "$A" --num_generations "$NG" --generation_batch_size "$GBS" --max_len "$ML" --baseline
+mv results/generated/comparison_chmm_a${A}_generated.csv \
+   results/generated/comparison_chmm_uniform6_a${A}_generated.csv
+
+python src/generate.py \
+    --hmm_variant chmm \
+    --hmm_model_path models/chmm_gpt-2-large_uniform6_bttf \
+    --prompts_path data/prompts.jsonl \
+    --weights_path classifiers/coefficients_nontoxicity.csv \
+    --num_generations 1 --max_len 5 \
+    --dump_eap_path results/figures/eap_chmm_uniform6.npz
+
+# ------------------------------------------------------------------
+# chmm (uniform8)
+# ------------------------------------------------------------------
+rm -f results/generated/comparison_chmm_a${A}_generated.csv \
+      results/generated/comparison_chmm_uniform8_a${A}_generated.csv
+python src/generate.py \
+    --hmm_variant chmm \
+    --hmm_model_path models/chmm_gpt-2-large_uniform8_bttf \
+    --prompts_path "$PROMPTS" \
+    --weights_path classifiers/coefficients_nontoxicity.csv \
+    --a "$A" --num_generations "$NG" --generation_batch_size "$GBS" --max_len "$ML" --baseline
+mv results/generated/comparison_chmm_a${A}_generated.csv \
+   results/generated/comparison_chmm_uniform8_a${A}_generated.csv
+
+python src/generate.py \
+    --hmm_variant chmm \
+    --hmm_model_path models/chmm_gpt-2-large_uniform8_bttf \
+    --prompts_path data/prompts.jsonl \
+    --weights_path classifiers/coefficients_nontoxicity.csv \
+    --num_generations 1 --max_len 5 \
+    --dump_eap_path results/figures/eap_chmm_uniform8.npz
+
+# ------------------------------------------------------------------
+# chmm (quadratic_log)
+# ------------------------------------------------------------------
+rm -f results/generated/comparison_chmm_a${A}_generated.csv \
+      results/generated/comparison_chmm_quadratic_log_a${A}_generated.csv
+python src/generate.py \
+    --hmm_variant chmm \
+    --hmm_model_path models/chmm_gpt-2-large_quadratic_log_bttf \
+    --prompts_path "$PROMPTS" \
+    --weights_path classifiers/coefficients_nontoxicity.csv \
+    --a "$A" --num_generations "$NG" --generation_batch_size "$GBS" --max_len "$ML" --baseline
+mv results/generated/comparison_chmm_a${A}_generated.csv \
+   results/generated/comparison_chmm_quadratic_log_a${A}_generated.csv
+
+python src/generate.py \
+    --hmm_variant chmm \
+    --hmm_model_path models/chmm_gpt-2-large_quadratic_log_bttf \
+    --prompts_path data/prompts.jsonl \
+    --weights_path classifiers/coefficients_nontoxicity.csv \
+    --num_generations 1 --max_len 5 \
+    --dump_eap_path results/figures/eap_chmm_quadratic_log.npz
+
 echo "==== GENERATION DONE ===="
 ls -la results/generated/comparison_*_a${A}_generated.csv
 ls -la results/figures/eap_*.npz

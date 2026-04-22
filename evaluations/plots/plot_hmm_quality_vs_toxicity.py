@@ -3,11 +3,12 @@
 HMM capacity vs toxicity plot (repurposed).
 
 Originally this script swept training-step checkpoints. With finished models
-only (hmm1 H=4096, hmm2 H=64, hmm2 H=256), the sweep is now across hidden-state
-capacity instead.
+only (hmm1 H=4096, hmm2 H=64, hmm2 H=256, chmm uniform6/uniform8/quadratic_log),
+the sweep is now across hidden-state capacity instead.
 
 Inputs per model:
-  - hidden_size (read from <model_dir>/config.json)
+  - hidden_size (read from <model_dir>/config.json; CHMM stores
+    ``clones_per_token`` instead and hidden size is inferred as its sum)
   - avg max toxicity (TRACE-mode) from an existing scored CSV in
     ``results/evaluation/``; if absent, generate + score on the fly.
   - optional: validation log-likelihood on a held-out JSONL if --val_data is set.
@@ -19,9 +20,9 @@ Output:
 Usage::
 
     python -m evaluations.plots.plot_hmm_quality_vs_toxicity \\
-        --models "hmm1:models/hmm_gpt2-large_bttf,hmm2:models/hmm2_gpt2-large_64_bttf,hmm2:models/hmm2_gpt2-large_256_bttf"
+        --models "hmm1:models/hmm_gpt2-large_bttf,hmm2:models/hmm2_gpt2-large_64_bttf,hmm2:models/hmm2_gpt2-large_256_bttf,chmm:models/chmm_gpt-2-large_uniform6_bttf"
 
-    # With val-LL annotation (slower; loads each HMM/SOHMM):
+    # With val-LL annotation (slower; loads each HMM/SOHMM/CHMM):
     python -m evaluations.plots.plot_hmm_quality_vs_toxicity \\
         --models "hmm1:models/hmm_gpt2-large_bttf,hmm2:models/hmm2_gpt2-large_256_bttf" \\
         --val_data data/RTP_test.jsonl --val_num_samples 1000
@@ -51,8 +52,11 @@ from evaluations.generation_runner import GenerationRunner
 from evaluations.metrics import compute_distinct_n, parse_scored_csv
 
 
+VALID_VARIANTS = {"hmm1", "hmm2", "chmm"}
+
+
 def _parse_models_arg(spec: str) -> List[Tuple[str, Path]]:
-    """Parse ``--models 'hmm1:path_a,hmm2:path_b'`` into tuples."""
+    """Parse ``--models 'hmm1:path_a,hmm2:path_b,chmm:path_c'`` into tuples."""
     entries = []
     for chunk in spec.split(","):
         chunk = chunk.strip()
@@ -64,9 +68,9 @@ def _parse_models_arg(spec: str) -> List[Tuple[str, Path]]:
             )
         variant, path_str = chunk.split(":", 1)
         variant = variant.strip()
-        if variant not in {"hmm1", "hmm2"}:
+        if variant not in VALID_VARIANTS:
             raise ValueError(
-                f"Unknown variant '{variant}' in --models; expected hmm1 or hmm2"
+                f"Unknown variant '{variant}' in --models; expected one of {sorted(VALID_VARIANTS)}"
             )
         model_path = Path(path_str.strip())
         if not model_path.is_absolute():
@@ -80,8 +84,21 @@ def _parse_models_arg(spec: str) -> List[Tuple[str, Path]]:
 
 
 def _read_hidden_size(model_dir: Path) -> int:
+    """Return total hidden-state count for hmm1/hmm2/chmm.
+
+    hmm1/hmm2 config.json stores ``hidden_size`` directly. CHMM's
+    ``config_dict`` writes ``clones_per_token`` (a per-token list) and
+    omits ``hidden_size`` — sum it to get H.
+    """
     with open(model_dir / "config.json", "r") as f:
-        return int(json.load(f)["hidden_size"])
+        config = json.load(f)
+    if "hidden_size" in config:
+        return int(config["hidden_size"])
+    if "clones_per_token" in config:
+        return int(sum(config["clones_per_token"]))
+    raise KeyError(
+        f"Neither 'hidden_size' nor 'clones_per_token' in {model_dir / 'config.json'}"
+    )
 
 
 def _canonical_tag(variant: str, model_dir: Path, hidden_size: int) -> str:
@@ -90,21 +107,26 @@ def _canonical_tag(variant: str, model_dir: Path, hidden_size: int) -> str:
     Convention (matches the files the user already has under
     ``results/evaluation/``):
 
-      - hmm1 → ``hmm1``
-      - hmm2 → ``hmm2_<hidden_size>``
-
-    The hmm2 tag is keyed on hidden size because ``src/generate.py`` writes
-    to ``results/generated/<comparison|detox>_<variant>_a<a>_generated.csv``
-    which would clobber across hmm2 sizes. Checkpoints the user scored
-    manually follow the ``hmm2_64`` / ``hmm2_256`` pattern.
+      - hmm1 -> ``hmm1``
+      - hmm2 -> ``hmm2_<hidden_size>``
+      - chmm -> ``chmm_<init_label>`` (e.g. ``chmm_uniform6``) — the init
+        label is the substring between ``large_`` and ``_bttf`` in the
+        model directory name; falls back to ``chmm_H<hidden_size>`` if the
+        naming doesn't match.
     """
     if variant == "hmm1":
         return "hmm1"
-    # Try to extract size from directory name first, fall back to config
-    m = re.search(r"_(\d+)_", model_dir.name)
+    if variant == "hmm2":
+        m = re.search(r"_(\d+)_", model_dir.name)
+        if m:
+            return f"hmm2_{m.group(1)}"
+        return f"hmm2_{hidden_size}"
+    # chmm
+    name = model_dir.name
+    m = re.search(r"large_(.+?)_bttf$", name)
     if m:
-        return f"hmm2_{m.group(1)}"
-    return f"hmm2_{hidden_size}"
+        return f"chmm_{m.group(1)}"
+    return f"chmm_H{hidden_size}"
 
 
 def _find_or_generate_scored_csv(
@@ -127,7 +149,8 @@ def _find_or_generate_scored_csv(
         return candidate
     # Fallback: regenerate. The runner writes scored CSVs to
     # results/evaluation/<basename>_scored.csv; we rename afterwards if
-    # the tag carries extra info (e.g. hmm2_256) the runner doesn't know.
+    # the tag carries extra info (e.g. hmm2_256, chmm_uniform6) the runner
+    # doesn't know.
     print(f"[hmm_capacity] No cached scored CSV at {candidate}; running generate+score for {variant} ({tag}) …")
     scored = runner.generate_and_score(
         hmm_variant=variant,
@@ -148,13 +171,7 @@ def _find_or_generate_scored_csv(
 
 
 def _per_mode_aggregate(df: pd.DataFrame, mode: str) -> Dict[str, float]:
-    """Compute TRACE-only (or baseline-only) toxicity + fluency + dist-n.
-
-    The union-mode columns written by ``src/score.py`` mix trace and baseline
-    scores, so capacity-vs-detox comparisons need a per-mode recomputation
-    from the JSON cells. Logic mirrors
-    ``evaluations/tables/table1_detoxification._aggregate_mode``.
-    """
+    """Compute TRACE-only (or baseline-only) toxicity + fluency + dist-n."""
     prefix = f"{mode}_gen_"
     cols = sorted(
         [c for c in df.columns if c.startswith(prefix)],
@@ -205,11 +222,7 @@ def _compute_val_ll_per_token(
     num_samples: int,
     device: str,
 ) -> Optional[float]:
-    """Average log-likelihood per token on the first ``num_samples`` continuations.
-
-    Returns ``None`` on failure so the plot still renders without LL
-    annotation for that point.
-    """
+    """Average log-likelihood per token on the first ``num_samples`` continuations."""
     try:
         import torch
         from transformers import GPT2Tokenizer
@@ -220,8 +233,10 @@ def _compute_val_ll_per_token(
 
     if variant == "hmm1":
         model = utils.load_hmm_model(str(model_path), device=device)
-    else:
+    elif variant == "hmm2":
         model = utils.load_sohmm_model(str(model_path), device=device)
+    else:  # chmm
+        model = utils.load_chmm_model(str(model_path), device=device)
 
     tokenizer = GPT2Tokenizer.from_pretrained("gpt2-large")
 
@@ -244,18 +259,28 @@ def _compute_val_ll_per_token(
         return None
 
     max_len = max(len(x) for x in token_ids)
-    pad_id = -1  # both HMM.forward and SOHMM.forward mask input_ids == -1
-    padded = torch.full((len(token_ids), max_len), pad_id, dtype=torch.long, device=device)
-    for i, ids in enumerate(token_ids):
-        padded[i, : len(ids)] = torch.tensor(ids, device=device)
-
+    # hmm1/hmm2 forward masks input_ids == -1 as missing. CHMM's
+    # forward_observed_compact path rejects -1; if we're running CHMM we need
+    # to skip the padding dimension by feeding each row individually.
     total_tokens = sum(len(x) for x in token_ids)
     with torch.no_grad():
+        if variant == "chmm":
+            ll_total = torch.tensor(0.0, device=device, dtype=torch.float32)
+            for ids in token_ids:
+                row = torch.tensor([ids], dtype=torch.long, device=device)
+                ll_total += model.loglikelihood(row, batch_size=1).squeeze()
+            return float(ll_total.item()) / float(total_tokens)
+
+        pad_id = -1
+        padded = torch.full(
+            (len(token_ids), max_len), pad_id, dtype=torch.long, device=device
+        )
+        for i, ids in enumerate(token_ids):
+            padded[i, : len(ids)] = torch.tensor(ids, device=device)
+
         try:
             ll = model.loglikelihood(padded, batch_size=8)
         except AttributeError:
-            # HMM has no `loglikelihood` method — run forward and sum the last-layer
-            # logsumexp.
             probs = model.forward(padded)
             ll = probs[-1].sum()
         return float(ll.item()) / float(total_tokens)
@@ -268,7 +293,7 @@ def main():
     parser.add_argument(
         "--models", type=str, required=True,
         help="Comma-separated 'variant:path' tuples, e.g. "
-             "'hmm1:models/hmm_gpt2-large_bttf,hmm2:models/hmm2_gpt2-large_256_bttf'",
+             "'hmm1:models/hmm_gpt2-large_bttf,chmm:models/chmm_gpt-2-large_uniform6_bttf'",
     )
     parser.add_argument("--a", type=float, default=1.0)
     parser.add_argument("--naming", type=str, default="comparison",
