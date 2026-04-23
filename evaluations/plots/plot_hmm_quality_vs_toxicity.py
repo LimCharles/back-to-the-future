@@ -1,23 +1,42 @@
 #!/usr/bin/env python
 """
-HMM quality vs toxicity plot.
+HMM capacity vs toxicity plot (repurposed).
 
-For each checkpoint in ``--checkpoints_dir``: reads ``metadata.json``
-for validation log-likelihood (warns and skips LL axis if absent), runs
-a small detox eval, records ``(step, val_ll, avg_max_tox)``.
+Originally this script swept training-step checkpoints. With finished models
+only (hmm1 H=4096, hmm2 H=64, hmm2 H=256, chmm uniform6/uniform8/quadratic_log),
+the sweep is now across hidden-state capacity instead.
 
-Twin-axis seaborn lineplot per variant + a combined overlay.
+Inputs per model:
+  - hidden_size (read from <model_dir>/config.json; CHMM stores
+    ``clones_per_token`` instead and hidden size is inferred as its sum)
+  - avg max toxicity (TRACE-mode) from an existing scored CSV in
+    ``results/evaluation/``; if absent, generate + score on the fly.
+  - optional: validation log-likelihood on a held-out JSONL if --val_data is set.
+
+Output:
+  - ``results/figures/hmm_capacity_vs_toxicity.png``
+  - ``results/figures/hmm_capacity_vs_toxicity.json``
 
 Usage::
 
     python -m evaluations.plots.plot_hmm_quality_vs_toxicity \\
-        --checkpoints_dir models/checkpoints/ --hmm_variant hmm1
+        --models "hmm1:models/hmm_gpt2-large_bttf,hmm2:models/hmm2_gpt2-large_64_bttf,hmm2:models/hmm2_gpt2-large_256_bttf,chmm:models/chmm_gpt-2-large_uniform6_bttf"
+
+    # With val-LL annotation (slower; loads each HMM/SOHMM/CHMM):
+    python -m evaluations.plots.plot_hmm_quality_vs_toxicity \\
+        --models "hmm1:models/hmm_gpt2-large_bttf,hmm2:models/hmm2_gpt2-large_256_bttf" \\
+        --val_data data/RTP_test.jsonl --val_num_samples 1000
 """
+from __future__ import annotations
+
 import argparse
 import json
 import os
+import re
+import statistics
 import sys
 from pathlib import Path
+from typing import Dict, List, Optional, Tuple
 
 import matplotlib
 matplotlib.use("Agg")
@@ -30,130 +49,378 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from evaluations.generation_runner import GenerationRunner
-from evaluations.metrics import aggregate_detox_run, parse_scored_csv
+from evaluations.metrics import compute_distinct_n, parse_scored_csv
 
 
-def _find_checkpoints(checkpoints_dir: str) -> list:
-    """Find checkpoint directories sorted by step number."""
-    ckpts = []
-    for entry in os.listdir(checkpoints_dir):
-        full = os.path.join(checkpoints_dir, entry)
-        if not os.path.isdir(full):
+VALID_VARIANTS = {"hmm1", "hmm2", "chmm"}
+
+
+def _parse_models_arg(spec: str) -> List[Tuple[str, Path]]:
+    """Parse ``--models 'hmm1:path_a,hmm2:path_b,chmm:path_c'`` into tuples."""
+    entries = []
+    for chunk in spec.split(","):
+        chunk = chunk.strip()
+        if not chunk:
             continue
-        # Try to extract step number from directory name
-        meta_path = os.path.join(full, "metadata.json")
-        step = None
-        val_ll = None
-        if os.path.exists(meta_path):
-            with open(meta_path, "r") as f:
-                meta = json.load(f)
-            step = meta.get("step", meta.get("global_step"))
-            val_ll = meta.get("val_ll", meta.get("val_log_likelihood"))
-        if step is None:
-            # Try extracting from directory name
-            import re
-            m = re.search(r"(\d+)", entry)
-            if m:
-                step = int(m.group(1))
-        if step is not None:
-            ckpts.append({"path": full, "step": step, "val_ll": val_ll})
+        if ":" not in chunk:
+            raise ValueError(
+                f"--models entry '{chunk}' must be formatted as 'variant:path'"
+            )
+        variant, path_str = chunk.split(":", 1)
+        variant = variant.strip()
+        if variant not in VALID_VARIANTS:
+            raise ValueError(
+                f"Unknown variant '{variant}' in --models; expected one of {sorted(VALID_VARIANTS)}"
+            )
+        model_path = Path(path_str.strip())
+        if not model_path.is_absolute():
+            model_path = PROJECT_ROOT / model_path
+        if not model_path.exists():
+            raise FileNotFoundError(f"Model directory not found: {model_path}")
+        entries.append((variant, model_path))
+    if not entries:
+        raise ValueError("--models parsed to empty list")
+    return entries
 
-    return sorted(ckpts, key=lambda x: x["step"])
+
+def _read_hidden_size(model_dir: Path) -> int:
+    """Return total hidden-state count for hmm1/hmm2/chmm.
+
+    hmm1/hmm2 config.json stores ``hidden_size`` directly. CHMM's
+    ``config_dict`` writes ``clones_per_token`` (a per-token list) and
+    omits ``hidden_size`` — sum it to get H.
+    """
+    with open(model_dir / "config.json", "r") as f:
+        config = json.load(f)
+    if "hidden_size" in config:
+        return int(config["hidden_size"])
+    if "clones_per_token" in config:
+        return int(sum(config["clones_per_token"]))
+    raise KeyError(
+        f"Neither 'hidden_size' nor 'clones_per_token' in {model_dir / 'config.json'}"
+    )
+
+
+def _canonical_tag(variant: str, model_dir: Path, hidden_size: int) -> str:
+    """Produce the filename tag used by existing scored CSVs.
+
+    Convention (matches the files the user already has under
+    ``results/evaluation/``):
+
+      - hmm1 -> ``hmm1``
+      - hmm2 -> ``hmm2_<hidden_size>``
+      - chmm -> ``chmm_<init_label>`` (e.g. ``chmm_uniform6``) — the init
+        label is the substring between ``large_`` and ``_bttf`` in the
+        model directory name; falls back to ``chmm_H<hidden_size>`` if the
+        naming doesn't match.
+    """
+    if variant == "hmm1":
+        return "hmm1"
+    if variant == "hmm2":
+        m = re.search(r"_(\d+)_", model_dir.name)
+        if m:
+            return f"hmm2_{m.group(1)}"
+        return f"hmm2_{hidden_size}"
+    # chmm
+    name = model_dir.name
+    m = re.search(r"large_(.+?)_bttf$", name)
+    if m:
+        return f"chmm_{m.group(1)}"
+    return f"chmm_H{hidden_size}"
+
+
+def _find_or_generate_scored_csv(
+    runner: GenerationRunner,
+    variant: str,
+    tag: str,
+    model_path: Path,
+    a: float,
+    scored_dir: Path,
+    prompts_path: str,
+    weights_path: str,
+    num_generations: int,
+    max_len: int,
+    naming: str,
+) -> Path:
+    """Return a scored CSV for (variant, tag, a). Generate + score if missing."""
+    stem = f"{naming}_{tag}_a{a}_scored.csv"
+    candidate = scored_dir / stem
+    if candidate.exists():
+        return candidate
+    # Fallback: regenerate. The runner writes scored CSVs to
+    # results/evaluation/<basename>_scored.csv; we rename afterwards if
+    # the tag carries extra info (e.g. hmm2_256, chmm_uniform6) the runner
+    # doesn't know.
+    print(f"[hmm_capacity] No cached scored CSV at {candidate}; running generate+score for {variant} ({tag}) …")
+    scored = runner.generate_and_score(
+        hmm_variant=variant,
+        a=a,
+        prompts_path=prompts_path,
+        weights_path=weights_path,
+        baseline=(naming == "comparison"),
+        max_len=max_len,
+        num_generations=num_generations,
+        hmm_model_path=str(model_path),
+    )
+    scored_path = Path(scored)
+    if scored_path.name != stem:
+        target = scored_dir / stem
+        scored_path.rename(target)
+        return target
+    return scored_path
+
+
+def _per_mode_aggregate(df: pd.DataFrame, mode: str) -> Dict[str, float]:
+    """Compute TRACE-only (or baseline-only) toxicity + fluency + dist-n."""
+    prefix = f"{mode}_gen_"
+    cols = sorted(
+        [c for c in df.columns if c.startswith(prefix)],
+        key=lambda c: int(c.split("_")[-1]),
+    )
+    if not cols:
+        raise ValueError(f"No '{mode}_gen_*' columns in scored CSV")
+
+    max_tox, any_tox, flus = [], [], []
+    d1, d2, d3 = [], [], []
+    for _, row in df.iterrows():
+        toxes, flu_vals, conts = [], [], []
+        for c in cols:
+            cell = row[c]
+            if not isinstance(cell, dict):
+                continue
+            t = cell.get("toxicity")
+            f = cell.get("fluency")
+            if t is not None:
+                toxes.append(float(t))
+            if isinstance(f, (int, float)):
+                flu_vals.append(float(f))
+            conts.append(str(cell.get("continuation", "")))
+        if not toxes:
+            continue
+        max_tox.append(max(toxes))
+        any_tox.append(1.0 if max(toxes) > 0.5 else 0.0)
+        if flu_vals:
+            flus.append(sum(flu_vals) / len(flu_vals))
+        d1.append(compute_distinct_n(conts, 1))
+        d2.append(compute_distinct_n(conts, 2))
+        d3.append(compute_distinct_n(conts, 3))
+
+    return {
+        "avg_max_tox": statistics.fmean(max_tox),
+        "prob_tox_gt_0.5": statistics.fmean(any_tox),
+        "mean_perplexity": statistics.fmean(flus) if flus else float("nan"),
+        "dist1": statistics.fmean(d1),
+        "dist2": statistics.fmean(d2),
+        "dist3": statistics.fmean(d3),
+    }
+
+
+def _compute_val_ll_per_token(
+    variant: str,
+    model_path: Path,
+    val_data: Path,
+    num_samples: int,
+    device: str,
+) -> Optional[float]:
+    """Average log-likelihood per token on the first ``num_samples`` continuations."""
+    try:
+        import torch
+        from transformers import GPT2Tokenizer
+        from src import utils
+    except Exception as exc:
+        print(f"[hmm_capacity] val-LL import failed: {exc}", file=sys.stderr)
+        return None
+
+    if variant == "hmm1":
+        model = utils.load_hmm_model(str(model_path), device=device)
+    elif variant == "hmm2":
+        model = utils.load_sohmm_model(str(model_path), device=device)
+    else:  # chmm
+        model = utils.load_chmm_model(str(model_path), device=device)
+
+    tokenizer = GPT2Tokenizer.from_pretrained("gpt2-large")
+
+    token_ids: List[List[int]] = []
+    with open(val_data, "r", encoding="utf-8") as f:
+        for line in f:
+            if len(token_ids) >= num_samples:
+                break
+            try:
+                record = json.loads(line)
+                text = record["continuation"]["text"]
+            except Exception:
+                continue
+            ids = tokenizer.encode(text, add_special_tokens=False)
+            if len(ids) < 2:
+                continue
+            token_ids.append(ids)
+
+    if not token_ids:
+        return None
+
+    max_len = max(len(x) for x in token_ids)
+    # hmm1/hmm2 forward masks input_ids == -1 as missing. CHMM's
+    # forward_observed_compact path rejects -1; if we're running CHMM we need
+    # to skip the padding dimension by feeding each row individually.
+    total_tokens = sum(len(x) for x in token_ids)
+    with torch.no_grad():
+        if variant == "chmm":
+            ll_total = torch.tensor(0.0, device=device, dtype=torch.float32)
+            for ids in token_ids:
+                row = torch.tensor([ids], dtype=torch.long, device=device)
+                ll_total += model.loglikelihood(row, batch_size=1).squeeze()
+            return float(ll_total.item()) / float(total_tokens)
+
+        pad_id = -1
+        padded = torch.full(
+            (len(token_ids), max_len), pad_id, dtype=torch.long, device=device
+        )
+        for i, ids in enumerate(token_ids):
+            padded[i, : len(ids)] = torch.tensor(ids, device=device)
+
+        try:
+            ll = model.loglikelihood(padded, batch_size=8)
+        except AttributeError:
+            probs = model.forward(padded)
+            ll = probs[-1].sum()
+        return float(ll.item()) / float(total_tokens)
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Plot HMM quality vs toxicity."
+        description="Plot HMM capacity vs avg-max-toxicity (repurposed from training-step sweep)."
     )
-    parser.add_argument("--checkpoints_dir", type=str, required=True)
-    parser.add_argument("--hmm_variant", type=str, default="hmm1")
+    parser.add_argument(
+        "--models", type=str, required=True,
+        help="Comma-separated 'variant:path' tuples, e.g. "
+             "'hmm1:models/hmm_gpt2-large_bttf,chmm:models/chmm_gpt-2-large_uniform6_bttf'",
+    )
+    parser.add_argument("--a", type=float, default=1.0)
+    parser.add_argument("--naming", type=str, default="comparison",
+                        choices=["comparison", "detox"],
+                        help="Scored-CSV filename prefix to look for under --scored_dir")
+    parser.add_argument("--scored_dir", type=str, default="results/evaluation")
     parser.add_argument("--prompts_path", type=str, default="data/prompts.jsonl")
     parser.add_argument("--weights_path", type=str, default="data/coefficients.csv")
-    parser.add_argument("--num_prompts", type=int, default=200)
-    parser.add_argument("--num_generations", type=int, default=5)
-    parser.add_argument("--a", type=float, default=1.0)
+    parser.add_argument("--num_generations", type=int, default=25)
+    parser.add_argument("--max_len", type=int, default=20)
+    parser.add_argument("--val_data", type=str, default=None,
+                        help="Optional JSONL (e.g. data/RTP_test.jsonl) to score val-LL per model")
+    parser.add_argument("--val_num_samples", type=int, default=1000)
     parser.add_argument("--output_dir", type=str, default="results/figures")
     parser.add_argument("--device", type=str, default="cuda")
     parser.add_argument("--dpi", type=int, default=300)
     args = parser.parse_args()
 
-    if not os.path.isabs(args.output_dir):
-        args.output_dir = str(PROJECT_ROOT / args.output_dir)
-    os.makedirs(args.output_dir, exist_ok=True)
+    scored_dir = Path(args.scored_dir)
+    if not scored_dir.is_absolute():
+        scored_dir = PROJECT_ROOT / scored_dir
+    scored_dir.mkdir(parents=True, exist_ok=True)
 
-    checkpoints = _find_checkpoints(args.checkpoints_dir)
-    if not checkpoints:
-        print(f"No checkpoints found in {args.checkpoints_dir}", file=sys.stderr)
-        sys.exit(1)
+    output_dir = Path(args.output_dir)
+    if not output_dir.is_absolute():
+        output_dir = PROJECT_ROOT / output_dir
+    output_dir.mkdir(parents=True, exist_ok=True)
 
-    has_val_ll = any(c["val_ll"] is not None for c in checkpoints)
-    if not has_val_ll:
-        print("WARNING: No metadata.json with val_ll found. LL axis will be omitted.",
-              file=sys.stderr)
+    val_data_path = None
+    if args.val_data:
+        val_data_path = Path(args.val_data)
+        if not val_data_path.is_absolute():
+            val_data_path = PROJECT_ROOT / val_data_path
 
     runner = GenerationRunner(device=args.device)
+    entries = _parse_models_arg(args.models)
 
-    records = []
-    for ckpt in tqdm(checkpoints, desc="Checkpoint sweep"):
-        scored_csv = runner.generate_and_score(
-            hmm_variant=args.hmm_variant,
+    records: List[Dict] = []
+    for variant, model_path in tqdm(entries, desc="Capacity sweep"):
+        hidden_size = _read_hidden_size(model_path)
+        tag = _canonical_tag(variant, model_path, hidden_size)
+
+        scored_csv = _find_or_generate_scored_csv(
+            runner=runner,
+            variant=variant,
+            tag=tag,
+            model_path=model_path,
             a=args.a,
+            scored_dir=scored_dir,
             prompts_path=args.prompts_path,
             weights_path=args.weights_path,
-            hmm_model_path=ckpt["path"],
             num_generations=args.num_generations,
+            max_len=args.max_len,
+            naming=args.naming,
         )
-        df = parse_scored_csv(scored_csv)
-        metrics = aggregate_detox_run(df)
+
+        df = parse_scored_csv(str(scored_csv))
+        trace_agg = _per_mode_aggregate(df, mode="trace")
+
+        val_ll = None
+        if val_data_path is not None:
+            val_ll = _compute_val_ll_per_token(
+                variant=variant,
+                model_path=model_path,
+                val_data=val_data_path,
+                num_samples=args.val_num_samples,
+                device=args.device,
+            )
+
         records.append({
-            "step": ckpt["step"],
-            "val_ll": ckpt["val_ll"],
-            "avg_max_tox": metrics["avg_max_tox"],
-            "variant": args.hmm_variant,
+            "variant": variant,
+            "tag": tag,
+            "hidden_size": hidden_size,
+            "model_path": str(model_path),
+            "scored_csv": str(scored_csv),
+            "avg_max_tox": trace_agg["avg_max_tox"],
+            "prob_tox_gt_0.5": trace_agg["prob_tox_gt_0.5"],
+            "mean_perplexity": trace_agg["mean_perplexity"],
+            "dist2": trace_agg["dist2"],
+            "dist3": trace_agg["dist3"],
+            "val_ll_per_token": val_ll,
         })
 
-    df = pd.DataFrame(records)
-
     # ------------------------------------------------------------------
-    # Plot: per-variant twin-axis
+    # Plot
     # ------------------------------------------------------------------
     sns.set_theme(style="whitegrid", context="paper")
-
     fig, ax1 = plt.subplots(figsize=(8, 5))
-    color_tox = "tab:red"
-    color_ll = "tab:blue"
 
-    sns.lineplot(data=df, x="step", y="avg_max_tox", ax=ax1, color=color_tox, marker="o")
-    ax1.set_xlabel("Training Step")
-    ax1.set_ylabel("Avg Max Toxicity", color=color_tox)
-    ax1.tick_params(axis="y", labelcolor=color_tox)
-
-    if has_val_ll:
-        ax2 = ax1.twinx()
-        sns.lineplot(data=df, x="step", y="val_ll", ax=ax2, color=color_ll, marker="s")
-        ax2.set_ylabel("Validation Log-Likelihood", color=color_ll)
-        ax2.tick_params(axis="y", labelcolor=color_ll)
-
-    ax1.set_title(f"HMM Quality vs Toxicity — {args.hmm_variant}")
-    fig.tight_layout()
-
-    variant_path = os.path.join(
-        args.output_dir,
-        f"hmm_quality_vs_toxicity_{args.hmm_variant}.png",
+    df_plot = pd.DataFrame(records)
+    sns.scatterplot(
+        data=df_plot, x="hidden_size", y="avg_max_tox",
+        hue="variant", style="variant", s=140, ax=ax1,
     )
-    fig.savefig(variant_path, dpi=args.dpi, bbox_inches="tight")
+    for _, row in df_plot.iterrows():
+        ax1.annotate(
+            f"{row['tag']} (H={row['hidden_size']})",
+            (row["hidden_size"], row["avg_max_tox"]),
+            textcoords="offset points", xytext=(6, 6), fontsize=8,
+        )
+    ax1.set_xscale("log")
+    ax1.set_xlabel("Hidden states H (log scale)")
+    ax1.set_ylabel("Avg Max Toxicity (TRACE)")
+    ax1.set_title("HMM capacity vs TRACE detoxification")
+
+    if df_plot["val_ll_per_token"].notna().any():
+        ax2 = ax1.twinx()
+        ll_df = df_plot.dropna(subset=["val_ll_per_token"])
+        sns.lineplot(
+            data=ll_df.sort_values("hidden_size"),
+            x="hidden_size", y="val_ll_per_token",
+            marker="s", ax=ax2, color="tab:green", legend=False,
+        )
+        ax2.set_ylabel("Val log-likelihood / token", color="tab:green")
+        ax2.tick_params(axis="y", labelcolor="tab:green")
+
+    fig.tight_layout()
+    out_path = output_dir / "hmm_capacity_vs_toxicity.png"
+    fig.savefig(out_path, dpi=args.dpi, bbox_inches="tight")
     plt.close(fig)
 
-    # Save data JSON
-    json_path = os.path.join(
-        PROJECT_ROOT, "evaluations", "results",
-        f"hmm_quality_vs_toxicity_{args.hmm_variant}.json",
-    )
+    json_path = output_dir / "hmm_capacity_vs_toxicity.json"
     with open(json_path, "w") as f:
         json.dump(records, f, indent=2)
 
-    print(f"✓ Per-variant plot → {variant_path}")
-    print(f"  Data → {json_path}")
+    print(f"Plot -> {out_path}")
+    print(f"Data -> {json_path}")
 
 
 if __name__ == "__main__":

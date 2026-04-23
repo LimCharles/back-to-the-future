@@ -156,11 +156,8 @@ def main():
     fig.savefig(out_path, dpi=args.dpi, bbox_inches="tight")
     plt.close(fig)
 
-    # Companion JSON
-    json_path = os.path.join(
-        PROJECT_ROOT, "evaluations", "results",
-        "role_quality_scatter_data.json",
-    )
+    # Companion JSON next to the PNG
+    json_path = os.path.join(args.output_dir, "role_quality_scatter_data.json")
     with open(json_path, "w") as f:
         json.dump(records, f, indent=2)
 

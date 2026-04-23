@@ -167,11 +167,8 @@ def main():
     fig.savefig(out_path, dpi=args.dpi, bbox_inches="tight")
     plt.close(fig)
 
-    # Companion JSON
-    json_path = os.path.join(
-        PROJECT_ROOT, "evaluations", "results",
-        "transformation_distributions_data.json",
-    )
+    # Companion JSON next to the PNG
+    json_path = os.path.join(args.output_dir, "transformation_distributions_data.json")
     with open(json_path, "w") as f:
         json.dump({
             "raw_mean": float(inverted.mean()),
