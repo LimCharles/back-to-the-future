@@ -38,6 +38,8 @@ def main():
     parser.add_argument("--hmm_model_path", type=str, default="models/hmm_gpt2-large_uncon_seq-len-32_4096_10M", help="Path to the trained HMM directory")
     parser.add_argument("--prompts_path", type=str, default="data/prompts.jsonl", help="Prompt file (JSONL)")
     parser.add_argument("--weights_path", type=str, default="data/coefficients.csv", help="Path to weights CSV file")
+    parser.add_argument("--output_path", type=str, default=None,
+                        help="Optional output CSV path (relative to project root or absolute)")
     parser.add_argument("--a", type=float, default=1.0, help="Strength of HMM guidance, often 0~2.0. 0 is no guidance, 1 is default.")
     parser.add_argument("--baseline", action="store_true", help="Generate baseline (no HMM guidance) alongside TRACE")
     parser.add_argument("--max_len", type=int, default=20, help="Max new tokens to generate")
@@ -60,17 +62,16 @@ def main():
     args.prompts_path = os.path.join(PROJECT_ROOT, args.prompts_path)
     args.weights_path = os.path.join(PROJECT_ROOT, args.weights_path)
     
-    # Derive output CSV path relative to project root
-    if args.baseline:
-        output_path = os.path.join(
-            PROJECT_ROOT,
-            f"results/generated/comparison_{args.hmm_variant}_a{args.a}_generated.csv"
-        )
+    # Derive output CSV path relative to project root unless absolute path is provided
+    if args.output_path:
+        output_path = args.output_path
+    elif args.baseline:
+        output_path = f"results/generated/comparison_{args.hmm_variant}_a{args.a}_generated.csv"
     else:
-        output_path = os.path.join(
-            PROJECT_ROOT,
-            f"results/generated/detox_{args.hmm_variant}_a{args.a}_generated.csv"
-        )
+        output_path = f"results/generated/detox_{args.hmm_variant}_a{args.a}_generated.csv"
+
+    if not os.path.isabs(output_path):
+        output_path = os.path.join(PROJECT_ROOT, output_path)
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
     # Setup device and seed

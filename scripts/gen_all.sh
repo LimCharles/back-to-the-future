@@ -22,7 +22,7 @@ PROMPTS=data/RTP_test.jsonl
 A=1.0
 NG=25
 ML=20
-GBS=25  # all 25 gens per prompt in a single generate() call
+GBS=10  # 10 gens per prompt in a single generate() call
 
 # ------------------------------------------------------------------
 # hmm1 (H=4096)
@@ -46,16 +46,14 @@ python src/generate.py \
 # ------------------------------------------------------------------
 # hmm2 (H=64)
 # ------------------------------------------------------------------
-rm -f results/generated/comparison_hmm2_a${A}_generated.csv \
-      results/generated/comparison_hmm2_64_a${A}_generated.csv
+rm -f results/generated/comparison_hmm2_64_a${A}_generated.csv
 python src/generate.py \
     --hmm_variant hmm2 \
     --hmm_model_path models/hmm2_gpt2-large_64_bttf \
     --prompts_path "$PROMPTS" \
     --weights_path classifiers/coefficients_nontoxicity.csv \
-    --a "$A" --num_generations "$NG" --generation_batch_size "$GBS" --max_len "$ML" --baseline
-mv results/generated/comparison_hmm2_a${A}_generated.csv \
-   results/generated/comparison_hmm2_64_a${A}_generated.csv
+    --a "$A" --num_generations "$NG" --generation_batch_size "$GBS" --max_len "$ML" --baseline \
+    --output_path results/generated/comparison_hmm2_64_a${A}_generated.csv
 
 python src/generate.py \
     --hmm_variant hmm2 \
@@ -68,16 +66,14 @@ python src/generate.py \
 # ------------------------------------------------------------------
 # hmm2 (H=256)
 # ------------------------------------------------------------------
-rm -f results/generated/comparison_hmm2_a${A}_generated.csv \
-      results/generated/comparison_hmm2_256_a${A}_generated.csv
+rm -f results/generated/comparison_hmm2_256_a${A}_generated.csv
 python src/generate.py \
     --hmm_variant hmm2 \
     --hmm_model_path models/hmm2_gpt2-large_256_bttf \
     --prompts_path "$PROMPTS" \
     --weights_path classifiers/coefficients_nontoxicity.csv \
-    --a "$A" --num_generations "$NG" --generation_batch_size "$GBS" --max_len "$ML" --baseline
-mv results/generated/comparison_hmm2_a${A}_generated.csv \
-   results/generated/comparison_hmm2_256_a${A}_generated.csv
+    --a "$A" --num_generations "$NG" --generation_batch_size "$GBS" --max_len "$ML" --baseline \
+    --output_path results/generated/comparison_hmm2_256_a${A}_generated.csv
 
 python src/generate.py \
     --hmm_variant hmm2 \
@@ -90,16 +86,14 @@ python src/generate.py \
 # ------------------------------------------------------------------
 # chmm (uniform6)
 # ------------------------------------------------------------------
-rm -f results/generated/comparison_chmm_a${A}_generated.csv \
-      results/generated/comparison_chmm_uniform6_a${A}_generated.csv
+rm -f results/generated/comparison_chmm_uniform6_a${A}_generated.csv
 python src/generate.py \
     --hmm_variant chmm \
     --hmm_model_path models/chmm_gpt-2-large_uniform6_bttf \
     --prompts_path "$PROMPTS" \
     --weights_path classifiers/coefficients_nontoxicity.csv \
-    --a "$A" --num_generations "$NG" --generation_batch_size "$GBS" --max_len "$ML" --baseline
-mv results/generated/comparison_chmm_a${A}_generated.csv \
-   results/generated/comparison_chmm_uniform6_a${A}_generated.csv
+    --a "$A" --num_generations "$NG" --generation_batch_size "$GBS" --max_len "$ML" --baseline \
+    --output_path results/generated/comparison_chmm_uniform6_a${A}_generated.csv
 
 python src/generate.py \
     --hmm_variant chmm \
@@ -112,16 +106,14 @@ python src/generate.py \
 # ------------------------------------------------------------------
 # chmm (uniform8)
 # ------------------------------------------------------------------
-rm -f results/generated/comparison_chmm_a${A}_generated.csv \
-      results/generated/comparison_chmm_uniform8_a${A}_generated.csv
+rm -f results/generated/comparison_chmm_uniform8_a${A}_generated.csv
 python src/generate.py \
     --hmm_variant chmm \
     --hmm_model_path models/chmm_gpt-2-large_uniform8_bttf \
     --prompts_path "$PROMPTS" \
     --weights_path classifiers/coefficients_nontoxicity.csv \
-    --a "$A" --num_generations "$NG" --generation_batch_size "$GBS" --max_len "$ML" --baseline
-mv results/generated/comparison_chmm_a${A}_generated.csv \
-   results/generated/comparison_chmm_uniform8_a${A}_generated.csv
+    --a "$A" --num_generations "$NG" --generation_batch_size "$GBS" --max_len "$ML" --baseline \
+    --output_path results/generated/comparison_chmm_uniform8_a${A}_generated.csv
 
 python src/generate.py \
     --hmm_variant chmm \
@@ -134,16 +126,14 @@ python src/generate.py \
 # ------------------------------------------------------------------
 # chmm (quadratic_log)
 # ------------------------------------------------------------------
-rm -f results/generated/comparison_chmm_a${A}_generated.csv \
-      results/generated/comparison_chmm_quadratic_log_a${A}_generated.csv
+rm -f results/generated/comparison_chmm_quadratic_log_a${A}_generated.csv
 python src/generate.py \
     --hmm_variant chmm \
     --hmm_model_path models/chmm_gpt-2-large_quadratic_log_bttf \
     --prompts_path "$PROMPTS" \
     --weights_path classifiers/coefficients_nontoxicity.csv \
-    --a "$A" --num_generations "$NG" --generation_batch_size "$GBS" --max_len "$ML" --baseline
-mv results/generated/comparison_chmm_a${A}_generated.csv \
-   results/generated/comparison_chmm_quadratic_log_a${A}_generated.csv
+    --a "$A" --num_generations "$NG" --generation_batch_size "$GBS" --max_len "$ML" --baseline \
+    --output_path results/generated/comparison_chmm_quadratic_log_a${A}_generated.csv
 
 python src/generate.py \
     --hmm_variant chmm \
