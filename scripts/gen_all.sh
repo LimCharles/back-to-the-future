@@ -14,6 +14,7 @@ set -euo pipefail
 
 nvidia-smi
 source /home/c/caplim/back-to-the-future/.venv/bin/activate
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 cd /home/c/caplim/back-to-the-future
 
 mkdir -p results/generated results/figures results/evaluation results/tables
